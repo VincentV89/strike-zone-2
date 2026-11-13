@@ -1,0 +1,27 @@
+name = "strike-zone-2-leaderboard"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding = "KV"
+id = "<production-kv-namespace-id>"
+
+[[unsafe.bindings]]
+name         = "RATE_LIMITER"
+type         = "ratelimit"
+namespace_id = "1"
+simple       = { limit = 10, period = 60 }
+
+[vars]
+ALLOWED_ORIGIN = "https://strike-zone-2.pages.dev"
+
+[env.staging]
+name = "strike-zone-2-leaderboard-staging"
+
+[env.staging.vars]
+ALLOWED_ORIGIN = "https://strike-zone-2-staging.pages.dev"
+
+[[env.staging.kv_namespaces]]
+binding = "KV"
+id      = "<staging-kv-namespace-id>"
