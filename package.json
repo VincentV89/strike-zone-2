@@ -10,9 +10,13 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/three": "^0.187.0",
     "@vitest/coverage-v8": "^2.1.0",
     "jsdom": "^25.0.1",
     "typescript": "^5.5.0",
     "vitest": "^2.1.0"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
   }
 }
