@@ -45,16 +45,34 @@ jobs:
         env:
           VITE_LEADERBOARD_URL: ${{ secrets.VITE_LEADERBOARD_URL }}
 
-      - name: Upload dist artefact
+      - name: Upload dist artifact
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
           retention-days: 1
 
+      # Bundle leaderboard-backend as a Lambda deployment package (CJS, single file)
+      - name: Bundle leaderboard-backend for Lambda
+        run: |
+          npx esbuild packages/leaderboard-backend/src/index.ts \
+            --bundle \
+            --platform=node \
+            --target=node20 \
+            --format=cjs \
+            --outfile=packages/leaderboard-backend/.lambda/index.js
+          cd packages/leaderboard-backend/.lambda && zip -r ../leaderboard-backend.zip index.js
+
+      - name: Upload leaderboard-backend Lambda package
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard-backend-lambda
+          path: packages/leaderboard-backend/leaderboard-backend.zip
+          retention-days: 1
+
   # ── Deploy (runs only on push to main) ────────────────────────────────────
   deploy:
-    name: Deploy to Cloudflare
+    name: Deploy to AWS
     needs: ci
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -62,45 +80,62 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          node-version: 20
-          cache: npm
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Install dependencies (locked)
-        run: npm ci
-
-      - name: Download dist artefact
+      - name: Download dist artifact
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
 
-      # Step 1 — Deploy leaderboard backend to staging
-      - name: Deploy leaderboard backend → staging
-        run: npx wrangler@3 deploy --env staging
-        working-directory: packages/leaderboard-backend
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Download leaderboard-backend Lambda package
+        uses: actions/download-artifact@v4
+        with:
+          name: leaderboard-backend-lambda
+          path: lambda/
+
+      # Step 1 — Deploy leaderboard backend to staging Lambda
+      - name: Deploy leaderboard-backend → staging Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ secrets.LAMBDA_FUNCTION_STAGING }} \
+            --zip-file fileb://lambda/leaderboard-backend.zip
 
       # Step 2 — Smoke test staging before promoting to production (SEC-DEPLOY-002)
-      - name: Smoke test staging Worker
+      - name: Smoke test staging Lambda
         run: |
           curl --fail --max-time 10 \
-            "https://strike-zone-2-leaderboard-staging.workers.dev/scores"
+            "${{ secrets.LEADERBOARD_STAGING_URL }}/scores"
 
-      # Step 3 — Promote leaderboard backend to production
-      - name: Deploy leaderboard backend → production
-        run: npx wrangler@3 deploy
-        working-directory: packages/leaderboard-backend
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Step 3 — Promote leaderboard backend to production Lambda
+      - name: Deploy leaderboard-backend → production Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name ${{ secrets.LAMBDA_FUNCTION_PROD }} \
+            --zip-file fileb://lambda/leaderboard-backend.zip
 
-      # Step 4 — Deploy frontend SPA to Cloudflare Pages production
-      - name: Deploy frontend → Cloudflare Pages
-        run: npx wrangler@3 pages deploy dist/ --project-name strike-zone-2 --branch main
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Step 4a — Deploy hashed frontend assets with long-lived cache
+      - name: Deploy frontend assets → S3 (immutable cache)
+        run: |
+          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }} \
+            --delete \
+            --exclude "index.html" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      # Step 4b — Deploy index.html with no-cache so deploys are instant
+      - name: Deploy index.html → S3 (no-cache)
+        run: |
+          aws s3 cp dist/index.html s3://${{ secrets.S3_BUCKET_NAME }}/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      # Step 5 — Invalidate CloudFront so new index.html is served immediately
+      - name: Invalidate CloudFront distribution
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
