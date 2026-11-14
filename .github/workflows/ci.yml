@@ -30,6 +30,12 @@ jobs:
       - name: Test with coverage
         run: npm run test:coverage
 
+      - name: Test leaderboard-backend package
+        run: npm run test --workspace=packages/leaderboard-backend
+
+      - name: Test leaderboard-client package
+        run: npm run test --workspace=packages/leaderboard-client
+
       # SEC-BUILD-001: block on high/critical CVEs before build or deploy
       - name: Dependency vulnerability scan
         run: npm audit --audit-level=high
