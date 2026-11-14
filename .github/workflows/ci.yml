@@ -90,7 +90,7 @@ jobs:
       - name: Smoke test staging Worker
         run: |
           curl --fail --max-time 10 \
-            "https://strike-zone-2-leaderboard-staging.workers.dev/scores"
+            "https://strike-zone-2-leaderboard-staging.vincent-form.workers.dev/scores"
 
       # Step 3 — Promote leaderboard backend to production
       - name: Deploy leaderboard backend → production
