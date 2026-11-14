@@ -1,0 +1,37 @@
+{
+  "id": "compound",
+  "displayName": "Compound",
+  "colliders": [
+    { "min": { "x": -50, "y": -1, "z": -50 }, "max": { "x": 50, "y": 0.1, "z": 50 } },
+    { "min": { "x": -50, "y": 0, "z": -50 }, "max": { "x": -45, "y": 4, "z": 50 } },
+    { "min": { "x":  45, "y": 0, "z": -50 }, "max": { "x":  50, "y": 4, "z": 50 } },
+    { "min": { "x": -50, "y": 0, "z": -50 }, "max": { "x":  50, "y": 4, "z": -45 } },
+    { "min": { "x": -50, "y": 0, "z":  45 }, "max": { "x":  50, "y": 4, "z":  50 } },
+    { "min": { "x":  -5, "y": 0, "z":  -5 }, "max": { "x":   5, "y": 2, "z":   5 } },
+    { "min": { "x": -30, "y": 0, "z": -20 }, "max": { "x": -20, "y": 3, "z":  20 } },
+    { "min": { "x":  20, "y": 0, "z": -20 }, "max": { "x":  30, "y": 3, "z":  20 } }
+  ],
+  "waypoints": [
+    { "id": "wp-a", "position": { "x": -35, "y": 1, "z": -35 }, "neighbors": ["wp-b", "wp-e"] },
+    { "id": "wp-b", "position": { "x":   0, "y": 1, "z": -35 }, "neighbors": ["wp-a", "wp-c", "wp-f"] },
+    { "id": "wp-c", "position": { "x":  35, "y": 1, "z": -35 }, "neighbors": ["wp-b", "wp-g"] },
+    { "id": "wp-d", "position": { "x": -35, "y": 1, "z":   0 }, "neighbors": ["wp-e", "wp-h"] },
+    { "id": "wp-e", "position": { "x": -35, "y": 1, "z":  35 }, "neighbors": ["wp-a", "wp-d", "wp-f"] },
+    { "id": "wp-f", "position": { "x":   0, "y": 1, "z":   0 }, "neighbors": ["wp-b", "wp-e", "wp-g", "wp-h"] },
+    { "id": "wp-g", "position": { "x":  35, "y": 1, "z":  35 }, "neighbors": ["wp-c", "wp-f", "wp-h"] },
+    { "id": "wp-h", "position": { "x":  35, "y": 1, "z":   0 }, "neighbors": ["wp-d", "wp-f", "wp-g"] }
+  ],
+  "spawnPoints": {
+    "player": [{ "x": -35, "y": 1, "z": -35 }],
+    "bots": [
+      { "x":  35, "y": 1, "z":  35 },
+      { "x":   0, "y": 1, "z":  35 },
+      { "x": -35, "y": 1, "z":  35 },
+      { "x":  35, "y": 1, "z":   0 },
+      { "x": -35, "y": 1, "z":   0 },
+      { "x":  35, "y": 1, "z": -35 },
+      { "x":   0, "y": 1, "z": -35 },
+      { "x":   0, "y": 1, "z":   0 }
+    ]
+  }
+}

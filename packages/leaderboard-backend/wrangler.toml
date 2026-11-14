@@ -1,0 +1,33 @@
+name = "strike-zone-2-leaderboard"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[kv_namespaces]]
+binding  = "KV"
+# Namespace title: strike-zone-2-scores-prod
+# Get the id from: Cloudflare Dashboard → Workers & Pages → KV → strike-zone-2-scores-prod → Details
+# Or run: npx wrangler@3 kv namespace list   (look for "title": "strike-zone-2-scores-prod")
+id = "772f7551e7754e87abe166c9ab2d7910"
+
+[[unsafe.bindings]]
+name         = "RATE_LIMITER"
+type         = "ratelimit"
+namespace_id = "1"
+simple       = { limit = 10, period = 60 }
+
+[vars]
+ALLOWED_ORIGIN = "https://strike-zone-2.pages.dev"
+
+[env.staging]
+name = "strike-zone-2-leaderboard-staging"
+
+[env.staging.vars]
+ALLOWED_ORIGIN = "https://strike-zone-2-staging.pages.dev"
+
+[[env.staging.kv_namespaces]]
+binding  = "KV"
+# Namespace title: strike-zone-2-scores-staging
+# Get the id from: Cloudflare Dashboard → Workers & Pages → KV → strike-zone-2-scores-staging → Details
+# Or run: npx wrangler@3 kv namespace list   (look for "title": "strike-zone-2-scores-staging")
+id      = "3b126d9096b843c7ae9da12ee27d2b9b"
