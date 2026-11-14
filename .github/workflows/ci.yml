@@ -37,8 +37,10 @@ jobs:
         run: npm run test --workspace=packages/leaderboard-client
 
       # SEC-BUILD-001: block on high/critical CVEs before build or deploy
+      # --omit=dev scopes the gate to production dependencies only; devDependencies
+      # (vitest, tinypool, vite, esbuild) are not shipped to Cloudflare Workers or Pages
       - name: Dependency vulnerability scan
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=dev
 
       - name: Build frontend
         run: npm run build

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1794592436308" clover="3.2.0">
-  <project timestamp="1794592436308" name="All files">
-    <metrics statements="1770" coveredstatements="1639" conditionals="435" coveredconditionals="404" methods="148" coveredmethods="143" elements="2353" coveredelements="2186" complexity="0" loc="1770" ncloc="1770" packages="10" files="21" classes="21"/>
+<coverage generated="1794623177987" clover="3.2.0">
+  <project timestamp="1794623177987" name="All files">
+    <metrics statements="1770" coveredstatements="1641" conditionals="437" coveredconditionals="406" methods="148" coveredmethods="143" elements="2355" coveredelements="2190" complexity="0" loc="1770" ncloc="1770" packages="10" files="21" classes="21"/>
     <package name="src">
       <metrics statements="50" coveredstatements="0" conditionals="1" coveredconditionals="0" methods="1" coveredmethods="0"/>
       <file name="main.ts" path="/mnt/workspace/src/main.ts">
@@ -458,9 +458,9 @@
       </file>
     </package>
     <package name="src.game-engine">
-      <metrics statements="230" coveredstatements="200" conditionals="45" coveredconditionals="41" methods="20" coveredmethods="17"/>
+      <metrics statements="230" coveredstatements="202" conditionals="47" coveredconditionals="43" methods="20" coveredmethods="17"/>
       <file name="game-engine.ts" path="/mnt/workspace/src/game-engine/game-engine.ts">
-        <metrics statements="218" coveredstatements="188" conditionals="43" coveredconditionals="39" methods="18" coveredmethods="15"/>
+        <metrics statements="218" coveredstatements="190" conditionals="45" coveredconditionals="41" methods="18" coveredmethods="15"/>
         <line num="1" count="1" type="stmt"/>
         <line num="24" count="1" type="stmt"/>
         <line num="25" count="1" type="stmt"/>
@@ -637,16 +637,16 @@
         <line num="247" count="14" type="stmt"/>
         <line num="250" count="14" type="stmt"/>
         <line num="253" count="14" type="stmt"/>
-        <line num="256" count="14" type="cond" truecount="0" falsecount="1"/>
-        <line num="257" count="0" type="stmt"/>
-        <line num="258" count="0" type="stmt"/>
+        <line num="256" count="14" type="cond" truecount="1" falsecount="0"/>
+        <line num="257" count="1" type="stmt"/>
+        <line num="258" count="1" type="cond" truecount="0" falsecount="1"/>
         <line num="259" count="0" type="stmt"/>
         <line num="260" count="0" type="stmt"/>
         <line num="261" count="0" type="stmt"/>
         <line num="262" count="0" type="stmt"/>
-        <line num="263" count="14" type="stmt"/>
-        <line num="264" count="14" type="stmt"/>
-        <line num="265" count="14" type="stmt"/>
+        <line num="263" count="14" type="cond" truecount="1" falsecount="0"/>
+        <line num="264" count="13" type="stmt"/>
+        <line num="265" count="13" type="stmt"/>
         <line num="268" count="14" type="cond" truecount="1" falsecount="0"/>
         <line num="269" count="6" type="cond" truecount="1" falsecount="0"/>
         <line num="270" count="14" type="cond" truecount="1" falsecount="0"/>
