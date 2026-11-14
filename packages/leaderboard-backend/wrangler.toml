@@ -8,7 +8,7 @@ binding  = "KV"
 # Namespace title: strike-zone-2-scores-prod
 # Get the id from: Cloudflare Dashboard → Workers & Pages → KV → strike-zone-2-scores-prod → Details
 # Or run: npx wrangler@3 kv namespace list   (look for "title": "strike-zone-2-scores-prod")
-id = "<strike-zone-2-scores-prod-id>"
+id = "strike-zone-2-scores-prod-id"
 
 [[unsafe.bindings]]
 name         = "RATE_LIMITER"
@@ -30,4 +30,4 @@ binding  = "KV"
 # Namespace title: strike-zone-2-scores-staging
 # Get the id from: Cloudflare Dashboard → Workers & Pages → KV → strike-zone-2-scores-staging → Details
 # Or run: npx wrangler@3 kv namespace list   (look for "title": "strike-zone-2-scores-staging")
-id      = "<strike-zone-2-scores-staging-id>"
+id      = "strike-zone-2-scores-staging-id"
