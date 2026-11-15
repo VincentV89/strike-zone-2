@@ -44,6 +44,8 @@ function simulateLockAcquired(element: Element = document.body): void {
     configurable: true,
   });
   document.dispatchEvent(new Event('pointerlockchange'));
+  // Chromium's spurious first move after locking (the handler must drop it)
+  dispatchMouseMove(eventTarget, 9999, -9999);
 }
 
 function simulateLockReleased(): void {
@@ -365,5 +367,48 @@ describe('getState() contract — IH-12, IH-16', () => {
     // But the handler's internal state is unaffected:
     const next = handler.getState();
     expect(next.forward).toBe(true);
+  });
+});
+
+describe('pointer lock — spurious first move', () => {
+  it('drops only the first mousemove after lock engages, then accumulates normally', () => {
+    const handler = new InputHandler();
+    handler.init();
+    Object.defineProperty(document, 'pointerLockElement', { get: () => document.body, configurable: true });
+    document.dispatchEvent(new Event('pointerlockchange'));
+
+    dispatchMouseMove(document, -400, -325); // bogus jump
+    expect(handler.getState().mouseDeltaX).toBe(0);
+
+    dispatchMouseMove(document, 7, 3);
+    const s = handler.getState();
+    expect(s.mouseDeltaX).toBe(7);
+    expect(s.mouseDeltaY).toBe(3);
+
+    // A repeated lockchange while still locked does not drop another move
+    document.dispatchEvent(new Event('pointerlockchange'));
+    dispatchMouseMove(document, 2, 0);
+    expect(handler.getState().mouseDeltaX).toBe(2);
+    handler.destroy();
+  });
+
+  it('reports the R key as reload', () => {
+    const handler = new InputHandler();
+    handler.init();
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR' }));
+    expect(handler.getState().reload).toBe(true);
+    document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyR' }));
+    expect(handler.getState().reload).toBe(false);
+    handler.destroy();
+  });
+
+  it('a reload tap between two frames is still reported once', () => {
+    const handler = new InputHandler();
+    handler.init();
+    document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyR' }));
+    document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyR' }));
+    expect(handler.getState().reload).toBe(true);
+    expect(handler.getState().reload).toBe(false);
+    handler.destroy();
   });
 });

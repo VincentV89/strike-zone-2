@@ -415,4 +415,99 @@ describe('CombatSystem', () => {
       expect(cs.getHealth('constructor')).toBe(100);
     });
   });
+
+  // ── onHit events (D-04/D-05 bridge) ─────────────────────────────────────
+
+  describe('onHit()', () => {
+    it('emits a hit event with remaining health after a non-lethal shot', () => {
+      const mesh = makeMesh();
+      const listener = vi.fn();
+      cs.onHit(listener);
+      cs.initCombatant('player', 100, 30);
+      cs.initCombatant('bot-1', 100, 999);
+      cs.registerHitbox('bot-1', mesh);
+      mockIntersectObjects.mockReturnValueOnce([makeHit(mesh, 'bot-1')]);
+
+      cs.fire(ORIGIN, UNIT_DIR, 'player', 25);
+
+      expect(listener).toHaveBeenCalledWith({
+        shooterId: 'player',
+        targetId: 'bot-1',
+        damage: 25,
+        remainingHealth: 75,
+        killed: false,
+      });
+    });
+
+    it('marks killed=true exactly once, on the lethal hit', () => {
+      const mesh = makeMesh();
+      const listener = vi.fn();
+      cs.onHit(listener);
+      cs.initCombatant('bot-1', 20, 999);
+      cs.initCombatant('player', 100, 30);
+      cs.registerHitbox('bot-1', mesh);
+      mockIntersectObjects.mockReturnValueOnce([makeHit(mesh, 'bot-1')]);
+
+      cs.fire(ORIGIN, UNIT_DIR, 'player', 25);
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener.mock.calls[0]![0]).toMatchObject({ killed: true, remainingHealth: 0 });
+    });
+
+    it('emits for applyDamage with a null shooter', () => {
+      const listener = vi.fn();
+      cs.onHit(listener);
+      cs.initCombatant('player', 100, 30);
+      cs.applyDamage('player', 40);
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ shooterId: null, targetId: 'player', damage: 40 }));
+    });
+
+    it('does not emit on a miss', () => {
+      const listener = vi.fn();
+      cs.onHit(listener);
+      cs.initCombatant('player', 100, 30);
+      cs.fire(ORIGIN, UNIT_DIR, 'player', 25);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('unsubscribe stops further events', () => {
+      const listener = vi.fn();
+      const off = cs.onHit(listener);
+      off();
+      cs.initCombatant('player', 100, 30);
+      cs.applyDamage('player', 10);
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── canHit filter (no bot friendly fire) ────────────────────────────────
+
+  describe('fire() canHit filter', () => {
+    it('excludes hitboxes the filter rejects from raycast candidates', () => {
+      const playerMesh = makeMesh();
+      const otherBotMesh = makeMesh();
+      cs.initCombatant('bot-1', 100, 999);
+      cs.initCombatant('bot-2', 100, 999);
+      cs.initCombatant('player', 100, 30);
+      cs.registerHitbox('player', playerMesh);
+      cs.registerHitbox('bot-2', otherBotMesh);
+
+      cs.fire(ORIGIN, UNIT_DIR, 'bot-1', 20, (id) => id === 'player');
+
+      const candidates = mockIntersectObjects.mock.calls[0]![0] as Mesh[];
+      expect(candidates).toEqual([playerMesh]);
+    });
+  });
+
+  // ── getCombatantIds ─────────────────────────────────────────────────────
+
+  describe('getCombatantIds()', () => {
+    it('lists registered combatants and is empty after reset', () => {
+      cs.initCombatant('player', 100, 30);
+      cs.initCombatant('bot-1', 100, 999);
+      expect(cs.getCombatantIds().sort()).toEqual(['bot-1', 'player']);
+      cs.reset();
+      expect(cs.getCombatantIds()).toEqual([]);
+    });
+  });
 });

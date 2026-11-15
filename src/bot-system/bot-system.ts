@@ -1,4 +1,5 @@
-import type { WaypointGraph } from '../map-system/types.js';
+import type { ColliderVolume, WaypointGraph } from '../map-system/types.js';
+import { PLAYER_ENTITY_ID } from '../player-system/types.js';
 import type { Vec3, EntityId } from '../renderer-core/types.js';
 import type {
   BotAgent,
@@ -28,15 +29,14 @@ export const BOT_PATROL_SPEED = 3.0;
 export const BOT_CHASE_SPEED = 5.0;
 export const WAYPOINT_ARRIVAL_THRESHOLD = 0.5;
 export const BOT_EYE_OFFSET_Y = 1.6;
+/** Bots aim at the player's chest: this far above the player's feet position. */
+export const BOT_AIM_HEIGHT = 1.2;
+/** Bot body AABB, matching the hitbox mesh (feet at bot.position.y). */
+export const BOT_HALF_WIDTH = 0.3;
+export const BOT_HEIGHT = 1.8;
 export const BOT_AIM_SPREAD_RADIANS = 0.05;
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
-
-let _entityIdCounter = 0;
-
-function nextEntityId(): EntityId {
-  return `bot-${++_entityIdCounter}`;
-}
 
 function uniform(min: number, max: number): number {
   return min + Math.random() * (max - min);
@@ -63,27 +63,71 @@ function applyAimSpread(dir: Vec3, spreadRad: number): Vec3 {
   });
 }
 
-function moveToward(bot: BotAgent, target: Vec3, speed: number, dtMs: number): void {
-  const d = distTo(bot.position, target);
+function overlapsAny(x: number, y: number, z: number, colliders: readonly ColliderVolume[]): boolean {
+  for (const c of colliders) {
+    if (
+      x - BOT_HALF_WIDTH < c.max.x && x + BOT_HALF_WIDTH > c.min.x &&
+      y < c.max.y && y + BOT_HEIGHT > c.min.y &&
+      z - BOT_HALF_WIDTH < c.max.z && z + BOT_HALF_WIDTH > c.min.z
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Moves the bot toward target on the XZ plane. Each axis is applied separately
+ * and rejected if it would put the bot body inside a collider, so bots slide
+ * along walls instead of passing through them.
+ */
+function moveToward(
+  bot: BotAgent,
+  target: Vec3,
+  speed: number,
+  dtMs: number,
+  colliders: readonly ColliderVolume[],
+): void {
+  const dx = target.x - bot.position.x;
+  const dz = target.z - bot.position.z;
+  const d = Math.sqrt(dx * dx + dz * dz);
   if (d < 1e-6) return;
   const step = (speed * dtMs) / 1000;
-  if (step >= d) {
-    bot.position.x = target.x;
-    bot.position.z = target.z;
-  } else {
-    const t = step / d;
-    bot.position.x += (target.x - bot.position.x) * t;
-    bot.position.z += (target.z - bot.position.z) * t;
+  const t = step >= d ? 1 : step / d;
+  const nextX = bot.position.x + dx * t;
+  if (!overlapsAny(nextX, bot.position.y, bot.position.z, colliders)) {
+    bot.position.x = nextX;
   }
+  const nextZ = bot.position.z + dz * t;
+  if (!overlapsAny(bot.position.x, bot.position.y, nextZ, colliders)) {
+    bot.position.z = nextZ;
+  }
+}
+
+const onlyPlayer = (targetId: EntityId): boolean => targetId === PLAYER_ENTITY_ID;
+
+export interface BotSystemOptions {
+  /** Starting health per bot. Defaults to BOT_MAX_HEALTH; the botHealth test hook overrides it. */
+  maxHealth?: number;
 }
 
 // ─── BotSystem ────────────────────────────────────────────────────────────────
 
 export class BotSystem {
+  private readonly maxHealth: number;
   private bots: BotAgent[] = [];
+  private colliders: readonly ColliderVolume[] = [];
   private graph: WaypointGraph | null = null;
   private combatSystem: CombatAdapter | null = null;
   private renderer: BotRendererAdapter | null = null;
+
+  constructor(options: BotSystemOptions = {}) {
+    const h = options.maxHealth;
+    if (h !== undefined && (!Number.isFinite(h) || h <= 0)) {
+      throw new RangeError(`maxHealth must be a positive number, got ${h}`);
+    }
+    this.maxHealth = h ?? BOT_MAX_HEALTH;
+  }
 
   /**
    * Initialise the bot system for a new round.
@@ -95,6 +139,7 @@ export class BotSystem {
     spawnPoints: readonly Vec3[],
     combatSystem: CombatAdapter,
     renderer: BotRendererAdapter,
+    colliders: readonly ColliderVolume[] = [],
   ): void {
     if (!Number.isInteger(count) || count < 1 || count > MAX_BOTS) {
       throw new RangeError(`Bot count must be between 1 and ${MAX_BOTS}, got ${count}`);
@@ -108,16 +153,18 @@ export class BotSystem {
     this.graph = waypointGraph;
     this.combatSystem = combatSystem;
     this.renderer = renderer;
+    this.colliders = colliders;
     this.bots = [];
 
+    // Ids restart every round (bot-1..bot-N) so combat records never accumulate.
     for (let i = 0; i < count; i++) {
       const sp = spawnPoints[i]!;
-      const id = nextEntityId();
+      const id: EntityId = `bot-${i + 1}`;
       const bot: BotAgent = {
         id,
         position: { x: sp.x, y: sp.y, z: sp.z },
         rotation: 0,
-        health: BOT_MAX_HEALTH,
+        health: this.maxHealth,
         state: 'idle',
         idleAccumMs: i * IDLE_STAGGER_MS,
         targetWaypointNodeId: null,
@@ -128,7 +175,7 @@ export class BotSystem {
         fireAccumMs: 0,
       };
       // Bots use large ammo so CombatSystem never blocks their shots.
-      combatSystem.initCombatant(id, BOT_MAX_HEALTH, Number.MAX_SAFE_INTEGER);
+      combatSystem.initCombatant(id, this.maxHealth, Number.MAX_SAFE_INTEGER);
       const mesh = renderer.getBotHitboxMesh(id);
       combatSystem.registerHitbox(id, mesh);
       this.bots.push(bot);
@@ -187,7 +234,7 @@ export class BotSystem {
       bot.position.y = sp.y;
       bot.position.z = sp.z;
       bot.rotation = 0;
-      bot.health = BOT_MAX_HEALTH;
+      bot.health = this.maxHealth;
       bot.state = 'idle';
       bot.idleAccumMs = i * IDLE_STAGGER_MS;
       bot.reactionAccumMs = 0;
@@ -262,7 +309,7 @@ export class BotSystem {
 
     const currentTarget = graph.nodes.get(bot.targetWaypointNodeId);
     if (currentTarget) {
-      moveToward(bot, currentTarget.position, BOT_PATROL_SPEED, dt);
+      moveToward(bot, currentTarget.position, BOT_PATROL_SPEED, dt, this.colliders);
     }
   }
 
@@ -283,7 +330,7 @@ export class BotSystem {
     }
 
     const targetNode = this.graph!.findNearest(bot.lastKnownPlayerPos);
-    moveToward(bot, targetNode.position, BOT_CHASE_SPEED, dt);
+    moveToward(bot, targetNode.position, BOT_CHASE_SPEED, dt, this.colliders);
   }
 
   private _tickEngage(bot: BotAgent, dt: number, player: PlayerState): void {
@@ -315,11 +362,11 @@ export class BotSystem {
     };
     const rawDir: Vec3 = {
       x: player.position.x - eyeOrigin.x,
-      y: player.position.y - eyeOrigin.y,
+      y: player.position.y + BOT_AIM_HEIGHT - eyeOrigin.y,
       z: player.position.z - eyeOrigin.z,
     };
     const perturbed = applyAimSpread(normalizeVec3(rawDir), BOT_AIM_SPREAD_RADIANS);
-    this.combatSystem!.fire(eyeOrigin, perturbed, bot.id, BOT_DAMAGE);
+    this.combatSystem!.fire(eyeOrigin, perturbed, bot.id, BOT_DAMAGE, onlyPlayer);
   }
 
   private _transitionTo(bot: BotAgent, nextState: BotFSMState): void {

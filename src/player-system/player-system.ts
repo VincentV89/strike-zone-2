@@ -10,6 +10,8 @@ import {
   MAX_HEALTH,
   MAX_AMMO,
   DAMAGE_PER_SHOT,
+  FIRE_INTERVAL_MS,
+  RELOAD_DURATION_MS,
   MOVE_SPEED,
   JUMP_VELOCITY,
   GRAVITY,
@@ -23,6 +25,8 @@ import {
   type ColliderVolume,
   type PlayerState,
 } from './types.js';
+
+const OVERLAP_EPSILON = 1e-6;
 
 function sanitiseDelta(v: number): number {
   return Number.isFinite(v) ? v : 0;
@@ -39,6 +43,8 @@ export class PlayerSystem {
   private health = MAX_HEALTH;
   private ammo = MAX_AMMO;
   private isAlive = false;
+  private fireCooldownMs = 0;
+  private reloadRemainingMs = 0;
   private colliders: ColliderVolume[] = [];
 
   // created once at construction; world position updated each frame
@@ -51,9 +57,13 @@ export class PlayerSystem {
     this.hitboxMesh = new Mesh(new BoxGeometry(HALF_W * 2, PLAYER_H, HALF_W * 2));
   }
 
-  spawn(spawnPoint: Vec3, colliders: ColliderVolume[]): void {
+  /**
+   * Places the player for a new round and registers it with CombatSystem.
+   * @param initialYaw radians; 0 faces -Z. The engine passes a yaw that faces the map centre.
+   */
+  spawn(spawnPoint: Vec3, colliders: ColliderVolume[], initialYaw = 0): void {
     this.position = { x: spawnPoint.x, y: spawnPoint.y, z: spawnPoint.z };
-    this.yaw = 0;
+    this.yaw = Number.isFinite(initialYaw) ? initialYaw : 0;
     this.pitch = 0;
     this.verticalVelocity = 0;
     this.onGround = true;
@@ -61,9 +71,14 @@ export class PlayerSystem {
     this.health = MAX_HEALTH;
     this.ammo = MAX_AMMO;
     this.isAlive = true;
+    this.fireCooldownMs = 0;
+    this.reloadRemainingMs = 0;
     this.colliders = colliders;
 
     this._syncHitboxMesh();
+    // Ammo is tracked here (magazine + reload); CombatSystem only needs the
+    // shooter registered, so give it an effectively unlimited count.
+    this.combat.initCombatant(PLAYER_ENTITY_ID, MAX_HEALTH, Number.MAX_SAFE_INTEGER);
     this.combat.registerHitbox(PLAYER_ENTITY_ID, this.hitboxMesh);
     this.renderer.setCamera(this._eyePosition(), this._cameraQuaternion());
   }
@@ -87,12 +102,11 @@ export class PlayerSystem {
       z: intent.z * dt,
     };
 
-    const { resolved, grounded } = this._sweepAABB(displacement);
-    this.position = {
-      x: this.position.x + resolved.x,
-      y: this.position.y + resolved.y,
-      z: this.position.z + resolved.z,
-    };
+    // Use the swept position as-is: re-adding deltas to the old position
+    // introduced float error that left the player a hair inside the floor,
+    // and the next X pass then shoved them out of the map.
+    const { position, grounded } = this._sweepAABB(displacement);
+    this.position = position;
 
     this.prevOnGround = this.onGround;
     this.onGround = grounded;
@@ -101,9 +115,14 @@ export class PlayerSystem {
     this._syncHitboxMesh();
     this.renderer.setCamera(this._eyePosition(), this._cameraQuaternion());
 
-    if (input.shoot && this.ammo > 0) {
-      this._fireWeapon();
-    }
+    this._updateWeapon(dt * 1000, input);
+  }
+
+  /** Starts a reload if one is useful. Returns true when a reload started. */
+  reload(): boolean {
+    if (!this.isAlive || this.reloadRemainingMs > 0 || this.ammo >= MAX_AMMO) return false;
+    this.reloadRemainingMs = RELOAD_DURATION_MS;
+    return true;
   }
 
   takeDamage(amount: number, _sourceId: string): void {
@@ -122,6 +141,7 @@ export class PlayerSystem {
       position: { x: this.position.x, y: this.position.y, z: this.position.z },
       rotation: { x: this.pitch, y: this.yaw },
       isAlive: this.isAlive,
+      isReloading: this.reloadRemainingMs > 0,
     });
   }
 
@@ -130,6 +150,8 @@ export class PlayerSystem {
     this.health = MAX_HEALTH;
     this.ammo = MAX_AMMO;
     this.isAlive = true;
+    this.fireCooldownMs = 0;
+    this.reloadRemainingMs = 0;
     this.verticalVelocity = 0;
     this.onGround = true;
     this.prevOnGround = true;
@@ -177,15 +199,15 @@ export class PlayerSystem {
     this.verticalVelocity -= GRAVITY * dt;
   }
 
-  private _sweepAABB(d: Vec3): { resolved: Vec3; grounded: boolean } {
+  private _sweepAABB(d: Vec3): { position: Vec3; grounded: boolean } {
     let px = this.position.x;
     let py = this.position.y;
     let pz = this.position.z;
     let grounded = false;
 
-    // X pass
+    // X pass (only resolves against colliders when actually moving on X)
     px += d.x;
-    for (const c of this.colliders) {
+    for (const c of d.x === 0 ? [] : this.colliders) {
       if (this._overlapsAABB(px, py, pz, c)) {
         px = d.x > 0 ? c.min.x - HALF_W : c.max.x + HALF_W;
       }
@@ -205,16 +227,16 @@ export class PlayerSystem {
       }
     }
 
-    // Z pass
+    // Z pass (only resolves against colliders when actually moving on Z)
     pz += d.z;
-    for (const c of this.colliders) {
+    for (const c of d.z === 0 ? [] : this.colliders) {
       if (this._overlapsAABB(px, py, pz, c)) {
         pz = d.z > 0 ? c.min.z - HALF_W : c.max.z + HALF_W;
       }
     }
 
     return {
-      resolved: { x: px - this.position.x, y: py - this.position.y, z: pz - this.position.z },
+      position: { x: px, y: py, z: pz },
       grounded,
     };
   }
@@ -222,8 +244,9 @@ export class PlayerSystem {
   private _overlapsAABB(px: number, py: number, pz: number, c: ColliderVolume): boolean {
     const minX = px - HALF_W;
     const maxX = px + HALF_W;
-    const minY = py;
-    const maxY = py + PLAYER_H;
+    // Small tolerance so standing exactly on a surface is not an overlap.
+    const minY = py + OVERLAP_EPSILON;
+    const maxY = py + PLAYER_H - OVERLAP_EPSILON;
     const minZ = pz - HALF_W;
     const maxZ = pz + HALF_W;
     return (
@@ -231,6 +254,25 @@ export class PlayerSystem {
       minY < c.max.y && maxY > c.min.y &&
       minZ < c.max.z && maxZ > c.min.z
     );
+  }
+
+  private _updateWeapon(dtMs: number, input: InputState): void {
+    this.fireCooldownMs = Math.max(0, this.fireCooldownMs - dtMs);
+
+    if (this.reloadRemainingMs > 0) {
+      this.reloadRemainingMs = Math.max(0, this.reloadRemainingMs - dtMs);
+      if (this.reloadRemainingMs === 0) this.ammo = MAX_AMMO;
+      return;
+    }
+
+    if (input.reload && this.reload()) return;
+
+    if (input.shoot && this.ammo > 0 && this.fireCooldownMs === 0) {
+      this._fireWeapon();
+      this.fireCooldownMs = FIRE_INTERVAL_MS;
+    }
+
+    if (this.ammo === 0) this.reload();
   }
 
   private _fireWeapon(): void {

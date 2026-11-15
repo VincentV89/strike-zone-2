@@ -18,9 +18,9 @@ export class LeaderboardClient {
 
   /**
    * Fetches the top 10 leaderboard entries.
-   * Returns [] on any error — never throws.
+   * Returns [] when the board is empty and null on any error — never throws.
    */
-  async getTopScores(): Promise<ScoreEntry[]> {
+  async getTopScores(): Promise<ScoreEntry[] | null> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -32,13 +32,13 @@ export class LeaderboardClient {
       });
 
       if (!response.ok) {
-        return [];
+        return null;
       }
 
-      const data = (await response.json()) as { scores: ScoreEntry[] };
-      return Array.isArray(data.scores) ? data.scores : [];
+      const data = (await response.json()) as { scores?: unknown };
+      return Array.isArray(data.scores) ? (data.scores as ScoreEntry[]) : null;
     } catch {
-      return [];
+      return null;
     } finally {
       clearTimeout(timer);
     }

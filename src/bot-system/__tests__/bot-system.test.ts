@@ -1,10 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Mesh } from 'three';
 
-import { BotSystem, MAX_BOTS, BOT_MAX_HEALTH, IDLE_DURATION_MS } from '../bot-system.js';
+import {
+  BotSystem,
+  MAX_BOTS,
+  BOT_MAX_HEALTH,
+  IDLE_DURATION_MS,
+  BOT_AIM_HEIGHT,
+  BOT_EYE_OFFSET_Y,
+  BOT_HALF_WIDTH,
+} from '../bot-system.js';
 import type { BotRendererAdapter, CombatAdapter, PlayerState } from '../types.js';
 import type { Vec3 } from '../../renderer-core/types.js';
-import type { WaypointGraph, WaypointNode } from '../../map-system/types.js';
+import type { ColliderVolume, WaypointGraph, WaypointNode } from '../../map-system/types.js';
 
 // ─── Factories ────────────────────────────────────────────────────────────────
 
@@ -426,6 +434,83 @@ describe('BotSystem', () => {
       const system = new BotSystem();
       expect(() => system.update(16, makePlayer())).not.toThrow();
       expect(system.getAllStates()).toHaveLength(0);
+    });
+  });
+
+  // ── D-09: per-round ids ──────────────────────────────────────────────────────
+
+  describe('entity ids', () => {
+    it('restart at bot-1 on every init so combatants do not accumulate across rounds', () => {
+      const system = new BotSystem();
+      const graph = makeWaypointGraph();
+      system.init(2, graph, makeSpawnPoints(2), makeCombatAdapter(), makeRendererAdapter());
+      system.init(2, graph, makeSpawnPoints(2), makeCombatAdapter(), makeRendererAdapter());
+      expect(system.getAllStates().map((b) => b.id)).toEqual(['bot-1', 'bot-2']);
+    });
+  });
+
+  // ── botHealth hook ─────────────────────────────────────────────────────────
+
+  describe('maxHealth option', () => {
+    it('sets each bot health and the combat record to the configured value', () => {
+      const combat = makeCombatAdapter();
+      const system = new BotSystem({ maxHealth: 1 });
+      system.init(2, makeWaypointGraph(), makeSpawnPoints(2), combat, makeRendererAdapter());
+      expect(system.getAllStates().every((b) => b.health === 1)).toBe(true);
+      expect(combat.initCombatant).toHaveBeenCalledWith('bot-1', 1, expect.any(Number));
+    });
+
+    it('rejects a non-positive maxHealth', () => {
+      expect(() => new BotSystem({ maxHealth: 0 })).toThrow(RangeError);
+      expect(() => new BotSystem({ maxHealth: Number.NaN })).toThrow(RangeError);
+    });
+  });
+
+  // ── D-11: colliders and aim ─────────────────────────────────────────────────
+
+  describe('colliders and aim (D-11)', () => {
+    it('does not walk into a collider between the bot and its waypoint', () => {
+      // Bot at x=0 heading to wp1 at x=10; a wall spans x 4..6
+      const wall: ColliderVolume = { min: { x: 4, y: 0, z: -5 }, max: { x: 6, y: 3, z: 5 } };
+      const n0: WaypointNode = { id: 'wp0', position: makeVec3(0, 0, 0), neighbors: [] };
+      const n1: WaypointNode = { id: 'wp1', position: makeVec3(10, 0, 0), neighbors: [] };
+      (n0.neighbors as WaypointNode[]).push(n1);
+      (n1.neighbors as WaypointNode[]).push(n0);
+      const graph: WaypointGraph = {
+        nodes: new Map([['wp0', n0], ['wp1', n1]]),
+        findNearest: () => n0,
+      };
+      const system = new BotSystem();
+      system.init(1, graph, [makeVec3(0, 0, 0)], makeCombatAdapter(), makeRendererAdapter(), [wall]);
+
+      system.update(IDLE_DURATION_MS, makePlayer()); // idle → patrol
+      for (let i = 0; i < 200; i++) system.update(50, makePlayer());
+
+      const x = system.getAllStates()[0]!.position.x;
+      expect(x + BOT_HALF_WIDTH).toBeLessThanOrEqual(wall.min.x);
+      expect(x).toBeGreaterThan(3); // it did move up to the wall
+    });
+
+    it('aims at the player chest, not the feet, and only targets the player', () => {
+      const combat = makeCombatAdapter();
+      const { system } = initSystem(1, { combat });
+      const target = makeVec3(0, 0, 3);
+      system.update(IDLE_DURATION_MS, makePlayer());
+      system.update(16, makePlayer({ position: makeVec3(0, 0, 5) }));
+      system.update(16, makePlayer({ position: target }));
+      system.update(4000, makePlayer({ position: target }));
+
+      const call = vi.mocked(combat.fire).mock.calls[0]!;
+      const [origin, dir, , , canHit] = call;
+      // Eye 1.6 → chest 1.2 over 3 m gives dir.y ≈ -0.13 (± aim spread);
+      // aiming at the feet (old behaviour) would give ≈ -0.47.
+      expect(origin.y).toBeCloseTo(BOT_EYE_OFFSET_Y);
+      expect(target.y + BOT_AIM_HEIGHT).toBeLessThan(origin.y);
+      expect(dir.y).toBeLessThan(0);
+      expect(dir.y).toBeGreaterThan(-0.25);
+      expect(canHit).toBeTypeOf('function');
+      expect(canHit!('player')).toBe(true);
+      expect(canHit!('bot-2')).toBe(false);
     });
   });
 });

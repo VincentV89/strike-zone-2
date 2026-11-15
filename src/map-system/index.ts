@@ -1,5 +1,8 @@
 export { MapSystem } from './map-system.js';
 export {
+  MAP_IDS,
+  MAP_DISPLAY_NAMES,
+  isMapId,
   MapNotFoundError,
   MalformedMapError,
   MapStateError,

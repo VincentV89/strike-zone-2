@@ -7,7 +7,7 @@ import type { BotState } from '../../bot-system/types.js';
 // ─── Factories ────────────────────────────────────────────────────────────────
 
 function makeConfig(overrides?: Partial<MatchConfig>): MatchConfig {
-  return { mapId: 'map-alpha', botCount: 3, roundDurationMs: 10_000, ...overrides };
+  return { mapId: 'dust', botCount: 3, roundDurationMs: 10_000, ...overrides };
 }
 
 function makePlayer(overrides?: Partial<PlayerState>): PlayerState {
@@ -17,6 +17,7 @@ function makePlayer(overrides?: Partial<PlayerState>): PlayerState {
     position: { x: 0, y: 0, z: 0 },
     rotation: { x: 0, y: 0 },
     isAlive: true,
+    isReloading: false,
     ...overrides,
   };
 }

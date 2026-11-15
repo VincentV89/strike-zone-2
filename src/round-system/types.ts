@@ -7,12 +7,13 @@ export type RoundPhase = 'pre-match' | 'in-round' | 'round-end';
 
 export type RoundOutcome = 'win' | 'lose' | null;
 
-export interface MatchConfig {
-  mapId: string;
-  botCount: number;
+import type { MenuMatchConfig } from '../game-engine/types.js';
+
+/** Round-level view of the engine MatchConfig: duration in ms instead of seconds. */
+export type MatchConfig = MenuMatchConfig & {
   /** Countdown length in ms. Defaults to 180_000 (3 min) if omitted or <= 0. */
   roundDurationMs?: number;
-}
+};
 
 export interface RoundState {
   readonly phase: RoundPhase;

@@ -14,7 +14,11 @@ export {
   BOT_PATROL_SPEED,
   BOT_CHASE_SPEED,
   BOT_AIM_SPREAD_RADIANS,
+  BOT_AIM_HEIGHT,
+  BOT_HALF_WIDTH,
+  BOT_HEIGHT,
 } from './bot-system.js';
+export type { BotSystemOptions } from './bot-system.js';
 export type {
   BotFSMState,
   BotState,

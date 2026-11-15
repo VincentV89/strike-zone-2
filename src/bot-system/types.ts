@@ -34,7 +34,13 @@ export interface CombatAdapter {
   initCombatant(entityId: EntityId, health: number, ammo: number): void;
   registerHitbox(entityId: EntityId, mesh: Mesh): void;
   unregisterHitbox(entityId: EntityId): void;
-  fire(origin: Vec3, direction: Vec3, shooterId: EntityId, damage: number): unknown;
+  fire(
+    origin: Vec3,
+    direction: Vec3,
+    shooterId: EntityId,
+    damage: number,
+    canHit?: (targetId: EntityId) => boolean,
+  ): unknown;
 }
 
 /** Mutable internal bot entity — never exposed outside bot-system. */

@@ -42,6 +42,12 @@
         width: 100%; height: 100%;
       }
 
+      .screen[data-screen="loading"] {
+        pointer-events: none;
+        background: rgba(0, 0, 0, 0.6);
+        width: 100%; height: 100%;
+      }
+
       /* HUD overlays the canvas — no pointer events */
       .screen[data-screen="hud"] {
         pointer-events: none;
@@ -120,6 +126,13 @@
         padding: 8px 12px; text-align: left; border-bottom: 1px solid #333;
       }
       .leaderboard__table th { opacity: 0.6; font-weight: 600; }
+
+      /* ── Fatal startup error ────────────────────────────── */
+      .fatal-error {
+        position: absolute; inset: 0; z-index: 10;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+        background: #200; color: #fdd; padding: 24px; text-align: center;
+      }
     </style>
   </head>
   <body>

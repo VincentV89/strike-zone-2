@@ -8,9 +8,17 @@ import type { MatchConfig } from '../types.js';
 
 vi.mock('three', () => ({
   BoxGeometry: vi.fn(),
-  Mesh: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
+  MeshLambertMaterial: vi.fn(),
+  // Implementation passed to vi.fn() directly so vi.restoreAllMocks() keeps it.
+  Mesh: vi.fn(function (this: Record<string, unknown>) {
     this['visible'] = true;
     this['userData'] = {};
+    const position = { x: 0, y: 0, z: 0 };
+    this['position'] = Object.assign(position, {
+      set: vi.fn((x: number, y: number, z: number) => Object.assign(position, { x, y, z })),
+    });
+    this['rotation'] = { y: 0 };
+    this['updateMatrixWorld'] = vi.fn();
   }),
 }));
 
@@ -71,12 +79,31 @@ function makeMapSystem() {
   };
 }
 
+type HitListener = (event: {
+  shooterId: string | null;
+  targetId: string;
+  damage: number;
+  remainingHealth: number;
+  killed: boolean;
+}) => void;
+
 function makeCombatSystem() {
+  const listeners: HitListener[] = [];
   return {
+    listeners,
     initCombatant: vi.fn(),
     registerHitbox: vi.fn(),
     unregisterHitbox: vi.fn(),
     fire: vi.fn().mockReturnValue(null),
+    reset: vi.fn(),
+    getCombatantIds: vi.fn().mockReturnValue(['player', 'bot-1']),
+    onHit: vi.fn((listener: HitListener) => {
+      listeners.push(listener);
+      return () => {};
+    }),
+    emitHit(event: Parameters<HitListener>[0]) {
+      for (const l of listeners) l(event);
+    },
   };
 }
 
@@ -87,6 +114,7 @@ function makePlayerState() {
     position: { x: 0, y: 0, z: 0 },
     rotation: { x: 0, y: 0 },
     isAlive: true,
+    isReloading: false,
   };
 }
 
@@ -94,6 +122,7 @@ function makePlayerSystem() {
   return {
     spawn: vi.fn(),
     update: vi.fn(),
+    takeDamage: vi.fn(),
     getState: vi.fn().mockReturnValue(makePlayerState()),
   };
 }
@@ -137,6 +166,7 @@ function makeRoundSystem() {
     update: vi.fn().mockImplementation(() => {}),
     getState: vi.fn().mockReturnValue(state),
     reset: vi.fn(),
+    recordKill: vi.fn(),
   };
 }
 
@@ -146,6 +176,9 @@ function makeUISystem() {
     onAction: vi.fn(),
     update: vi.fn(),
     showHUD: vi.fn(),
+    showLoading: vi.fn(),
+    showError: vi.fn(),
+    setPracticeMode: vi.fn(),
     showMainMenu: vi.fn(),
     showEndRound: vi.fn(),
     showLeaderboard: vi.fn(),
@@ -161,10 +194,12 @@ function makeLeaderboardClient() {
 }
 
 function makeCanvas() {
-  return {
+  const canvas = document.createElement('canvas');
+  Object.assign(canvas, {
     requestPointerLock: vi.fn(),
     getContext: vi.fn().mockReturnValue({}),
-  } as unknown as HTMLCanvasElement;
+  });
+  return canvas;
 }
 
 function makeContainer() {
@@ -173,7 +208,7 @@ function makeContainer() {
 
 function makeConfig(overrides: Partial<MatchConfig> = {}): MatchConfig {
   return {
-    mapId: 'map-a',
+    mapId: 'dust',
     botCount: 3,
     roundDurationSecs: 60,
     ...overrides,
@@ -303,8 +338,8 @@ describe('GameEngine', () => {
     });
 
     it('calls mapSystem.load with the configured mapId', async () => {
-      await engine.start(makeConfig({ mapId: 'map-b' }));
-      expect(mapSystem.load).toHaveBeenCalledWith('map-b');
+      await engine.start(makeConfig({ mapId: 'compound' }));
+      expect(mapSystem.load).toHaveBeenCalledWith('compound');
     });
 
     it('spawns player at first spawn point', async () => {
@@ -312,6 +347,7 @@ describe('GameEngine', () => {
       expect(playerSystem.spawn).toHaveBeenCalledWith(
         { x: 0, y: 0, z: 0 },
         expect.any(Array),
+        0,
       );
     });
 
@@ -333,6 +369,7 @@ describe('GameEngine', () => {
         expect.arrayContaining([expect.objectContaining({ x: expect.any(Number) })]),
         combatSystem,
         expect.any(Object),
+        expect.any(Array),
       );
     });
 
@@ -509,7 +546,7 @@ describe('GameEngine', () => {
     });
 
     it('routes start-game to start()', async () => {
-      engine.onUIAction({ type: 'start-game', config: { mapId: 'map-a', botCount: 2 } });
+      engine.onUIAction({ type: 'start-game', config: { mapId: 'dust', botCount: 2 } });
       await vi.waitFor(() => expect(engine.state).toBe('in-round'));
     });
 
@@ -543,7 +580,7 @@ describe('GameEngine', () => {
       expect(uiSystem.showLeaderboard).toHaveBeenCalledWith(entries);
     });
 
-    it('shows empty leaderboard when no client configured', async () => {
+    it('shows unavailable leaderboard (null) when no client configured', async () => {
       const engineNoClient = new GameEngine(
         renderer as never, inputHandler as never, mapSystem as never,
         combatSystem as never, playerSystem as never, botSystem as never,
@@ -551,7 +588,7 @@ describe('GameEngine', () => {
       );
       await engineNoClient.init(canvas, container);
       engineNoClient.onUIAction({ type: 'view-leaderboard' });
-      await vi.waitFor(() => expect(uiSystem.showLeaderboard).toHaveBeenCalledWith([]));
+      await vi.waitFor(() => expect(uiSystem.showLeaderboard).toHaveBeenCalledWith(null));
     });
 
     it('submit-score with no client calls onSubmitResult with error', async () => {
@@ -609,6 +646,290 @@ describe('GameEngine', () => {
       // Now start again
       await expect(engine.start(makeConfig())).resolves.not.toThrow();
       expect(engine.state).toBe('in-round');
+    });
+  });
+
+  // ─── D-13: start failure recovery ────────────────────────────────────────
+
+  describe('start() failure recovery (D-13)', () => {
+    beforeEach(async () => {
+      await engine.init(canvas, container);
+    });
+
+    it('returns to menu, shows a visible error and rejects when map loading fails', async () => {
+      mapSystem.load.mockRejectedValueOnce(new Error('HTTP 404'));
+      await expect(engine.start(makeConfig())).rejects.toThrow('HTTP 404');
+      expect(engine.state).toBe('menu');
+      expect(uiSystem.showMainMenu).toHaveBeenCalled();
+      expect(uiSystem.showError).toHaveBeenCalledWith(expect.stringContaining('HTTP 404'));
+      expect(engine.getDebugSnapshot().lastError).toBe('HTTP 404');
+    });
+
+    it('a later start() retries without IllegalStateError', async () => {
+      mapSystem.load.mockRejectedValueOnce(new Error('boom'));
+      await expect(engine.start(makeConfig())).rejects.toThrow('boom');
+      await expect(engine.start(makeConfig())).resolves.toBeUndefined();
+      expect(engine.state).toBe('in-round');
+      expect(engine.getDebugSnapshot().lastError).toBeNull();
+    });
+
+    it('logs start-game failures from the UI path instead of leaving an unhandled rejection', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mapSystem.load.mockRejectedValueOnce(new Error('nope'));
+      engine.onUIAction({ type: 'start-game', config: { mapId: 'dust', botCount: 1 } });
+      await vi.waitFor(() => expect(errSpy).toHaveBeenCalledWith('GameEngine: start failed', expect.any(Error)));
+      expect(engine.state).toBe('menu');
+    });
+
+    it('shows the loading screen while the map loads', async () => {
+      const p = engine.start(makeConfig());
+      expect(uiSystem.showLoading).toHaveBeenCalled();
+      await p;
+    });
+
+    it('ignores start-game while a match is already loading', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      engine.onUIAction({ type: 'start-game', config: { mapId: 'dust', botCount: 1 } });
+      engine.onUIAction({ type: 'start-game', config: { mapId: 'dust', botCount: 1 } });
+      expect(mapSystem.load).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("ignoring start request while 'loading'"));
+      await vi.waitFor(() => expect(engine.state).toBe('in-round'));
+    });
+  });
+
+  // ─── D-08: pointer lock ──────────────────────────────────────────────────
+
+  describe('pointer lock (D-08)', () => {
+    beforeEach(async () => {
+      await engine.init(canvas, container);
+    });
+
+    it('requests pointer lock synchronously inside the start-game action', () => {
+      engine.onUIAction({ type: 'start-game', config: { mapId: 'dust', botCount: 1 } });
+      // Still loading: the request must not wait for the async map load
+      expect(engine.state).toBe('loading');
+      expect(canvas.requestPointerLock).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-requests pointer lock when the canvas is clicked during a round', async () => {
+      await engine.start(makeConfig());
+      canvas.dispatchEvent(new MouseEvent('click'));
+      expect(canvas.requestPointerLock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not request pointer lock on canvas click outside a round', () => {
+      canvas.dispatchEvent(new MouseEvent('click'));
+      expect(canvas.requestPointerLock).not.toHaveBeenCalled();
+    });
+
+    it('handles a rejected pointer lock promise with a warning', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      (canvas.requestPointerLock as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+        Promise.reject(new Error('denied')),
+      );
+      engine.onUIAction({ type: 'start-game', config: { mapId: 'dust', botCount: 1 } });
+      await vi.waitFor(() =>
+        expect(warnSpy).toHaveBeenCalledWith('GameEngine: pointer lock request was rejected', expect.any(Error)),
+      );
+    });
+
+    it('handles a throwing requestPointerLock with a warning', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      (canvas.requestPointerLock as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+        throw new Error('not allowed');
+      });
+      engine.onUIAction({ type: 'start-game', config: { mapId: 'dust', botCount: 1 } });
+      expect(warnSpy).toHaveBeenCalledWith('GameEngine: pointer lock request failed', expect.any(Error));
+    });
+  });
+
+  // ─── D-03/D-04/D-05/D-09: combat wiring ──────────────────────────────────
+
+  describe('combat event routing', () => {
+    beforeEach(async () => {
+      await engine.init(canvas, container);
+      await engine.start(makeConfig());
+    });
+
+    it('subscribes to combat hits during init', () => {
+      expect(combatSystem.onHit).toHaveBeenCalledTimes(1);
+    });
+
+    it('resets combat state at the start of every round (D-09)', async () => {
+      expect(combatSystem.reset).toHaveBeenCalledTimes(1);
+      roundSystem.getState.mockReturnValue(makeRoundState({ phase: 'round-end', outcome: 'lose' }));
+      rafCallbacks.pop()!(100);
+      await engine.start(makeConfig());
+      expect(combatSystem.reset).toHaveBeenCalledTimes(2);
+    });
+
+    it('routes bot hits on the player to PlayerSystem.takeDamage (D-04)', () => {
+      combatSystem.emitHit({ shooterId: 'bot-1', targetId: 'player', damage: 20, remainingHealth: 80, killed: false });
+      expect(playerSystem.takeDamage).toHaveBeenCalledWith(20, 'bot-1');
+      expect(botSystem.onBotKilled).not.toHaveBeenCalled();
+    });
+
+    it('propagates a bot kill by the player to BotSystem and RoundSystem (D-05)', () => {
+      combatSystem.emitHit({ shooterId: 'player', targetId: 'bot-1', damage: 25, remainingHealth: 0, killed: true });
+      expect(botSystem.onBotKilled).toHaveBeenCalledWith('bot-1');
+      expect(roundSystem.recordKill).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not credit a kill without a player shooter', () => {
+      combatSystem.emitHit({ shooterId: null, targetId: 'bot-1', damage: 100, remainingHealth: 0, killed: true });
+      expect(botSystem.onBotKilled).toHaveBeenCalledWith('bot-1');
+      expect(roundSystem.recordKill).not.toHaveBeenCalled();
+    });
+
+    it('ignores non-lethal hits on bots', () => {
+      combatSystem.emitHit({ shooterId: 'player', targetId: 'bot-1', damage: 25, remainingHealth: 75, killed: false });
+      expect(botSystem.onBotKilled).not.toHaveBeenCalled();
+      expect(roundSystem.recordKill).not.toHaveBeenCalled();
+    });
+
+    it('spawns the player facing the map centre', async () => {
+      mapSystem.getSpawnPoints.mockReturnValue({ ...makeSpawnManifest(), player: [{ x: 0, y: 1, z: -45 }] });
+      roundSystem.getState.mockReturnValue(makeRoundState({ phase: 'round-end', outcome: 'lose' }));
+      rafCallbacks.pop()!(100);
+      await engine.start(makeConfig());
+      const yaw = playerSystem.spawn.mock.calls.at(-1)?.[2] as number;
+      expect(Math.abs(yaw)).toBeCloseTo(Math.PI);
+    });
+
+    it('re-reads player state after bots fire so the HUD and round see the damage this frame', () => {
+      playerSystem.getState
+        .mockReturnValueOnce(makePlayerState())
+        .mockReturnValueOnce({ ...makePlayerState(), health: 0, isAlive: false });
+      rafCallbacks.pop()!(100);
+      const roundPlayer = roundSystem.update.mock.calls.at(-1)?.[1] as { isAlive: boolean };
+      expect(roundPlayer.isAlive).toBe(false);
+    });
+  });
+
+  // ─── D-06: bot mesh sync ─────────────────────────────────────────────────
+
+  describe('bot mesh sync (D-06)', () => {
+    type MeshLike = { position: { x: number; y: number; z: number }; visible: boolean };
+    function meshAdapter(): { getBotHitboxMesh(id: string): MeshLike } {
+      return botSystem.init.mock.calls.at(-1)?.[4] as { getBotHitboxMesh(id: string): MeshLike };
+    }
+
+    beforeEach(async () => {
+      await engine.init(canvas, container);
+      await engine.start(makeConfig());
+    });
+
+    it('moves each live bot mesh to its BotSystem position every tick', () => {
+      const adapter = meshAdapter();
+      const mesh = adapter.getBotHitboxMesh('bot-1');
+      botSystem.getAllStates.mockReturnValue([
+        { ...makeBotState('bot-1'), position: { x: 4, y: 1, z: -7 } },
+      ]);
+      rafCallbacks.pop()!(100);
+      expect(mesh.position).toMatchObject({ x: 4, y: 1 + 0.9, z: -7 });
+      expect(mesh.visible).toBe(true);
+    });
+
+    it('hides the mesh of a dead bot', () => {
+      const mesh = meshAdapter().getBotHitboxMesh('bot-1');
+      botSystem.getAllStates.mockReturnValue([makeBotState('bot-1', 'dead')]);
+      rafCallbacks.pop()!(100);
+      expect(mesh.visible).toBe(false);
+    });
+
+    it('creates one mesh per bot id and adds it to the scene once', () => {
+      const adapter = meshAdapter();
+      const a = adapter.getBotHitboxMesh('bot-1');
+      const b = adapter.getBotHitboxMesh('bot-1');
+      expect(a).toBe(b);
+      expect(renderer.addToScene).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ─── Test hooks: options, practice mode, debug snapshot ──────────────────
+
+  describe('engine options (test hooks)', () => {
+    function makeEngine(options: Record<string, unknown>): GameEngine {
+      return new GameEngine(
+        renderer as never, inputHandler as never, mapSystem as never,
+        combatSystem as never, playerSystem as never, botSystem as never,
+        roundSystem as never, uiSystem as never, leaderboardClient as never,
+        options,
+      );
+    }
+
+    it('uses roundDurationSecs override for menu starts', async () => {
+      const e = makeEngine({ roundDurationSecs: 5 });
+      await e.init(canvas, container);
+      e.onUIAction({ type: 'start-game', config: { mapId: 'compound', botCount: 1 } });
+      await vi.waitFor(() => expect(e.state).toBe('in-round'));
+      expect(roundSystem.configure).toHaveBeenCalledWith(expect.objectContaining({ roundDurationMs: 5000 }));
+      expect(mapSystem.load).toHaveBeenCalledWith('compound');
+    });
+
+    it('defaults to a 180 s round without overrides', async () => {
+      await engine.init(canvas, container);
+      engine.onUIAction({ type: 'start-game', config: { mapId: 'dust', botCount: 1 } });
+      await vi.waitFor(() => expect(engine.state).toBe('in-round'));
+      expect(roundSystem.configure).toHaveBeenCalledWith(expect.objectContaining({ roundDurationMs: 180_000 }));
+      expect(uiSystem.setPracticeMode).toHaveBeenCalledWith(false);
+    });
+
+    it('practice mode never sends a score to the leaderboard', async () => {
+      const e = makeEngine({ practiceMode: true });
+      await e.init(canvas, container);
+      expect(uiSystem.setPracticeMode).toHaveBeenCalledWith(true);
+      e.onUIAction({ type: 'submit-score', alias: 'Ace' });
+      await vi.waitFor(() => expect(uiSystem.onSubmitResult).toHaveBeenCalled());
+      expect(leaderboardClient.submitScore).not.toHaveBeenCalled();
+      expect(uiSystem.onSubmitResult).toHaveBeenCalledWith({
+        success: false,
+        error: 'Practice round, score not submitted',
+      });
+    });
+
+    it('passes a null (unavailable) leaderboard result through to the UI', async () => {
+      leaderboardClient.getTopScores.mockResolvedValue(null as never);
+      await engine.init(canvas, container);
+      engine.onUIAction({ type: 'view-leaderboard' });
+      await vi.waitFor(() => expect(uiSystem.showLeaderboard).toHaveBeenCalledWith(null));
+    });
+
+    it('shows unavailable when the leaderboard client rejects', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      leaderboardClient.getTopScores.mockRejectedValue(new Error('down'));
+      await engine.init(canvas, container);
+      engine.onUIAction({ type: 'view-leaderboard' });
+      await vi.waitFor(() => expect(uiSystem.showLeaderboard).toHaveBeenCalledWith(null));
+    });
+
+    it('reports a failed submission when the leaderboard client rejects', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      leaderboardClient.submitScore.mockRejectedValue(new Error('down'));
+      await engine.init(canvas, container);
+      engine.onUIAction({ type: 'submit-score', alias: 'Ace' });
+      await vi.waitFor(() =>
+        expect(uiSystem.onSubmitResult).toHaveBeenCalledWith({ success: false, error: 'down' }),
+      );
+    });
+
+    it('getDebugSnapshot returns a frozen view of engine, round, player and bots', async () => {
+      await engine.init(canvas, container);
+      await engine.start(makeConfig({ mapId: 'compound' }));
+      const snap = engine.getDebugSnapshot();
+      expect(snap).toMatchObject({
+        engineState: 'in-round',
+        roundPhase: 'in-round',
+        kills: 0,
+        mapId: 'compound',
+        practiceMode: false,
+        player: { health: 100, ammo: 30, isAlive: true },
+        bots: [{ id: 'bot-1', alive: true }],
+        combatantIds: ['player', 'bot-1'],
+      });
+      expect(Object.isFrozen(snap)).toBe(true);
+      expect(Object.isFrozen(snap.player)).toBe(true);
+      expect(Object.isFrozen(snap.bots[0])).toBe(true);
     });
   });
 });

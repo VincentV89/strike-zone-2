@@ -12,6 +12,7 @@ import type {
   MapGeometryNode,
 } from './types.js';
 import {
+  MAP_IDS,
   MapNotFoundError,
   MalformedMapError,
   MapStateError,
@@ -19,7 +20,7 @@ import {
 } from './types.js';
 import { buildWaypointGraph } from './waypoint-graph.js';
 
-const VALID_MAP_IDS: ReadonlySet<MapId> = new Set<MapId>(['dust', 'compound']);
+const VALID_MAP_IDS: ReadonlySet<MapId> = new Set<MapId>(MAP_IDS);
 const MAX_BOT_COUNT = 8;
 const TRIANGLE_BUDGET = 50_000;
 const COLLIDER_BUDGET = 500;
