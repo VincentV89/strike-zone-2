@@ -2,7 +2,19 @@ import type { Object3D, BufferGeometry, Material, Group } from 'three';
 
 export type { Vec3 } from '../renderer-core/types.js';
 
-export type MapId = 'dust' | 'compound';
+/** Single source of truth for playable map ids (UI, engine, round and map systems). */
+export const MAP_IDS = ['dust', 'compound'] as const;
+export type MapId = (typeof MAP_IDS)[number];
+
+/** Menu labels; must match each map's definition.json displayName. */
+export const MAP_DISPLAY_NAMES: Readonly<Record<MapId, string>> = Object.freeze({
+  dust: 'Dust',
+  compound: 'Compound',
+});
+
+export function isMapId(value: unknown): value is MapId {
+  return typeof value === 'string' && (MAP_IDS as readonly string[]).includes(value);
+}
 export type MapSystemState = 'idle' | 'loading' | 'loaded' | 'unloading';
 
 // Raw JSON shapes from definition.json (transient; discarded after hydration)

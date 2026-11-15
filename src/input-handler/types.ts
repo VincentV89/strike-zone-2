@@ -5,6 +5,7 @@ export interface InputState {
   right: boolean;
   jump: boolean;
   shoot: boolean;
+  reload: boolean;
   mouseDeltaX: number;
   mouseDeltaY: number;
 }
@@ -18,6 +19,7 @@ export const KEY_BINDINGS = {
   left:     'KeyA',
   right:    'KeyD',
   jump:     'Space',
+  reload:   'KeyR',
 } as const satisfies Record<string, string>;
 
 export const MOUSE_BUTTON_PRIMARY = 0;

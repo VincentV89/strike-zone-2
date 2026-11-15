@@ -27,6 +27,7 @@ function makeUIState(overrides: {
       position: { x: 0, y: 0, z: 0 },
       rotation: { x: 0, y: 0 },
       isAlive: (overrides.health ?? 100) > 0,
+      isReloading: false,
     },
     roundState: {
       phase: overrides.phase ?? 'in-round',
@@ -156,13 +157,22 @@ describe('UISystem', () => {
     expect(rows[0]!.querySelectorAll('td')[1]!.textContent).toBe('Bob');
   });
 
-  it('showLeaderboard with empty entries shows unavailable message', () => {
+  it('showLeaderboard with empty entries shows "No scores yet." (D-14)', () => {
     ui.showHUD();
     ui.showEndRound('win', 0);
     ui.showLeaderboard([]);
 
     const status = container.querySelector('[data-testid="leaderboard-status"]')!;
-    expect(status.textContent).toContain('unavailable');
+    expect(status.textContent).toBe('No scores yet.');
+  });
+
+  it('showLeaderboard(null) shows "Leaderboard unavailable." (D-14)', () => {
+    ui.showHUD();
+    ui.showEndRound('win', 0);
+    ui.showLeaderboard(null);
+
+    const status = container.querySelector('[data-testid="leaderboard-status"]')!;
+    expect(status.textContent).toBe('Leaderboard unavailable.');
   });
 
   // ─── onSubmitResult ───────────────────────────────────────────────────────
@@ -199,7 +209,7 @@ describe('UISystem', () => {
       expect.objectContaining({ type: 'start-game' }),
     );
     const action = handler.mock.calls[0]![0] as UIAction & { type: 'start-game' };
-    expect(action.config.mapId).toBe('map-a');
+    expect(action.config.mapId).toBe('dust');
     expect(action.config.botCount).toBe(3);
   });
 
@@ -276,5 +286,100 @@ describe('UISystem', () => {
 
     for (let i = 0; i < 10; i++) incBtn.click();
     expect(display.textContent).toBe('8');
+  });
+
+  // ─── D-09: Play Again does not flash the menu ─────────────────────────────
+
+  it('Play Again keeps the end screen until the engine switches screens (no menu flash)', () => {
+    ui.onAction(vi.fn());
+    ui.showHUD();
+    ui.showEndRound('lose', 0);
+    container.querySelector<HTMLButtonElement>('[data-testid="play-again-button"]')!.click();
+    expect(container.querySelector('[data-screen="main-menu"]')!.classList.contains('active')).toBe(false);
+  });
+
+  it('showLoading activates only the loading screen', () => {
+    ui.showLoading();
+    expect(container.querySelector('[data-screen="loading"]')!.classList.contains('active')).toBe(true);
+    expect(container.querySelector('[data-screen="main-menu"]')!.classList.contains('active')).toBe(false);
+    expect(container.querySelector('[data-screen="hud"]')!.classList.contains('active')).toBe(false);
+  });
+
+  // ─── D-13: visible start error ────────────────────────────────────────────
+
+  it('showError writes a visible message on the menu; the next Play click clears it', () => {
+    ui.onAction(vi.fn());
+    ui.showMainMenu();
+    ui.showError('Could not start the match: HTTP 404');
+    const err = container.querySelector('[data-testid="menu-error"]')!;
+    expect(err.textContent).toBe('Could not start the match: HTTP 404');
+    container.querySelector<HTMLButtonElement>('[data-testid="play-button"]')!.click();
+    expect(err.textContent).toBe('');
+  });
+
+  // ─── D-01/D-10: map selector ──────────────────────────────────────────────
+
+  it('map selector offers dust/Dust and compound/Compound and dispatches the chosen id', () => {
+    const handler = vi.fn();
+    ui.onAction(handler);
+    const select = container.querySelector<HTMLSelectElement>('[data-testid="map-selector"]')!;
+    const options = Array.from(select.options).map((o) => [o.value, o.textContent]);
+    expect(options).toEqual([['dust', 'Dust'], ['compound', 'Compound']]);
+
+    select.value = 'compound';
+    select.dispatchEvent(new Event('change'));
+    container.querySelector<HTMLButtonElement>('[data-testid="play-button"]')!.click();
+    const action = handler.mock.calls[0]![0] as UIAction & { type: 'start-game' };
+    expect(action.config.mapId).toBe('compound');
+  });
+
+  // ─── Practice mode (hooks block submission) ───────────────────────────────
+
+  it('practice mode disables submission and shows the practice notice', () => {
+    const handler = vi.fn();
+    ui.onAction(handler);
+    ui.setPracticeMode(true);
+    ui.showHUD();
+    ui.showEndRound('lose', 0);
+
+    const notice = container.querySelector<HTMLElement>('[data-testid="practice-notice"]')!;
+    const submit = container.querySelector<HTMLButtonElement>('[data-testid="submit-button"]')!;
+    const alias = container.querySelector<HTMLInputElement>('[data-testid="alias-input"]')!;
+    expect(notice.hidden).toBe(false);
+    expect(notice.textContent).toBe('Practice round, score not submitted');
+    expect(submit.hasAttribute('disabled')).toBe(true);
+    expect(alias.hasAttribute('disabled')).toBe(true);
+
+    alias.value = 'Hero';
+    submit.removeAttribute('disabled'); // even if re-enabled, the click must not dispatch
+    submit.click();
+    expect(handler).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'submit-score' }));
+  });
+
+  it('normal mode hides the practice notice and enables submission', () => {
+    ui.showHUD();
+    ui.showEndRound('win', 100);
+    expect(container.querySelector<HTMLElement>('[data-testid="practice-notice"]')!.hidden).toBe(true);
+    expect(container.querySelector('[data-testid="submit-button"]')!.hasAttribute('disabled')).toBe(false);
+  });
+
+  // ─── Reload indicator ─────────────────────────────────────────────────────
+
+  it('HUD shows the reload indicator while reloading', () => {
+    ui.showHUD();
+    const state = makeUIState({ ammo: 0 });
+    ui.update({ ...state, playerState: { ...state.playerState, isReloading: true } });
+    expect(container.querySelector<HTMLElement>('[data-hud="reloading"]')!.hidden).toBe(false);
+    ui.update(makeUIState({}));
+    expect(container.querySelector<HTMLElement>('[data-hud="reloading"]')!.hidden).toBe(true);
+  });
+
+  it('leaderboard rows carry a data-testid', () => {
+    ui.showHUD();
+    ui.showEndRound('win', 0);
+    ui.showLeaderboard([{ alias: 'Ace', score: 900, timestamp: '2026-01-01T00:00:00Z' }]);
+    const rows = container.querySelectorAll('[data-testid="leaderboard-row"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.textContent).toContain('Ace');
   });
 });

@@ -1,5 +1,6 @@
 import type { RoundState, RoundOutcome } from '../round-system/types.js';
 import type { PlayerState } from '../player-system/types.js';
+import type { MenuMatchConfig } from '../game-engine/types.js';
 
 export type { RoundState, RoundOutcome, PlayerState };
 
@@ -10,12 +11,10 @@ export interface ScoreEntry {
   timestamp: string;
 }
 
-export type ScreenId = 'main-menu' | 'hud' | 'end-round' | 'leaderboard';
+export type ScreenId = 'main-menu' | 'loading' | 'hud' | 'end-round' | 'leaderboard';
 
-export interface MatchConfig {
-  mapId: 'map-a' | 'map-b';
-  botCount: number;
-}
+/** Menu selection — derived from the engine's MatchConfig so map ids cannot drift. */
+export type MatchConfig = MenuMatchConfig;
 
 export interface UIState {
   readonly playerState: PlayerState;

@@ -2,6 +2,22 @@ import { Mesh, Raycaster, Vector3 } from 'three';
 
 import type { EntityId, RaycastHit, Vec3 } from '../renderer-core/types.js';
 
+/** Emitted after CombatSystem resolves damage against a combatant. */
+export interface CombatHitEvent {
+  /** null when damage came from applyDamage() rather than a shot. */
+  readonly shooterId: EntityId | null;
+  readonly targetId: EntityId;
+  readonly damage: number;
+  readonly remainingHealth: number;
+  /** True when this hit took the target from alive to dead. */
+  readonly killed: boolean;
+}
+
+export type CombatHitListener = (event: CombatHitEvent) => void;
+
+/** Optional per-shot filter; return false to make a hitbox transparent to this shot. */
+export type HitFilter = (targetId: EntityId) => boolean;
+
 interface CombatantRecord {
   health: number;
   ammo: number;
@@ -36,6 +52,20 @@ export class CombatSystem {
   private readonly raycaster = new Raycaster();
   private readonly _originVec = new Vector3();
   private readonly _directionVec = new Vector3();
+  private readonly hitListeners = new Set<CombatHitListener>();
+
+  /** Subscribes to resolved hits. Returns an unsubscribe function. */
+  onHit(listener: CombatHitListener): () => void {
+    this.hitListeners.add(listener);
+    return () => {
+      this.hitListeners.delete(listener);
+    };
+  }
+
+  /** Ids of every registered combatant (debug and round-reset checks). */
+  getCombatantIds(): EntityId[] {
+    return [...this.combatantMap.keys()];
+  }
 
   initCombatant(entityId: EntityId, startHealth: number, startAmmo: number): void {
     assertEntityId(entityId, 'entityId');
@@ -53,7 +83,13 @@ export class CombatSystem {
     this._doUnregister(entityId);
   }
 
-  fire(origin: Vec3, direction: Vec3, shooterId: EntityId, damage: number): RaycastHit | null {
+  fire(
+    origin: Vec3,
+    direction: Vec3,
+    shooterId: EntityId,
+    damage: number,
+    canHit?: HitFilter,
+  ): RaycastHit | null {
     assertEntityId(shooterId, 'shooterId');
     assertFiniteDamage(damage);
     assertUnitVector(direction, 'direction');
@@ -67,7 +103,9 @@ export class CombatSystem {
 
     const candidates: Mesh[] = [];
     for (const [eid, mesh] of this.hitboxRegistry) {
-      if (eid !== shooterId) candidates.push(mesh);
+      if (eid === shooterId) continue;
+      if (canHit && !canHit(eid)) continue;
+      candidates.push(mesh);
     }
 
     this._originVec.set(origin.x, origin.y, origin.z);
@@ -87,11 +125,7 @@ export class CombatSystem {
     const targetRecord = this.combatantMap.get(hitEntityId);
     if (!targetRecord) return null;
 
-    targetRecord.health = Math.max(0, targetRecord.health - damage);
-    if (targetRecord.health === 0) {
-      targetRecord.isAlive = false;
-      this._doUnregister(hitEntityId);
-    }
+    this._damage(hitEntityId, targetRecord, damage, shooterId);
 
     const faceNormal = hit.face?.normal ?? { x: 0, y: 0, z: 0 };
     return {
@@ -113,11 +147,7 @@ export class CombatSystem {
 
     if (record.health === 0) return;
 
-    record.health = Math.max(0, record.health - dmg);
-    if (record.health === 0) {
-      record.isAlive = false;
-      this._doUnregister(entityId);
-    }
+    this._damage(entityId, record, dmg, null);
   }
 
   isEliminated(entityId: EntityId): boolean {
@@ -140,6 +170,30 @@ export class CombatSystem {
     this.combatantMap.clear();
     this.hitboxRegistry.clear();
     this.meshToEntityId.clear();
+  }
+
+  private _damage(
+    targetId: EntityId,
+    record: CombatantRecord,
+    damage: number,
+    shooterId: EntityId | null,
+  ): void {
+    const wasAlive = record.isAlive;
+    record.health = Math.max(0, record.health - damage);
+    if (record.health === 0) {
+      record.isAlive = false;
+      this._doUnregister(targetId);
+    }
+    const event: CombatHitEvent = Object.freeze({
+      shooterId,
+      targetId,
+      damage,
+      remainingHealth: record.health,
+      killed: wasAlive && !record.isAlive,
+    });
+    for (const listener of this.hitListeners) {
+      listener(event);
+    }
   }
 
   private _doUnregister(entityId: EntityId): void {

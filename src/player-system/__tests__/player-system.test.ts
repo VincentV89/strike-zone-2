@@ -5,6 +5,8 @@ import {
   MAX_HEALTH,
   MAX_AMMO,
   DAMAGE_PER_SHOT,
+  FIRE_INTERVAL_MS,
+  RELOAD_DURATION_MS,
   PLAYER_ENTITY_ID,
   DELTA_CAP_S,
   PITCH_MIN_RAD,
@@ -64,6 +66,7 @@ function makeInput(overrides: Partial<InputState> = {}): InputState {
     right: false,
     jump: false,
     shoot: false,
+    reload: false,
     mouseDeltaX: 0,
     mouseDeltaY: 0,
     ...overrides,
@@ -314,6 +317,13 @@ describe('PlayerSystem', () => {
 
   // ── update() — weapon fire ────────────────────────────────────────────────
 
+  /** Holds fire in 50 ms frames until the magazine is empty (bounded). */
+  function drainMagazine(): void {
+    for (let i = 0; i < 1000 && ps.getState().ammo > 0; i++) {
+      ps.update(50, makeInput({ shoot: true }));
+    }
+  }
+
   describe('update() — weapon fire', () => {
     const FLOOR: ColliderVolume = { min: { x: -100, y: -1, z: -100 }, max: { x: 100, y: 0, z: 100 } };
 
@@ -336,21 +346,19 @@ describe('PlayerSystem', () => {
 
     it('does not call combat.fire when ammo is 0', () => {
       ps.spawn(SPAWN, NO_COLLIDERS);
-      // Drain ammo
-      for (let i = 0; i < MAX_AMMO; i++) {
-        ps.update(16, makeInput({ shoot: true }));
-      }
+      drainMagazine();
+      expect(ps.getState().ammo).toBe(0);
       combat.fire.mockClear();
-      ps.update(16, makeInput({ shoot: true }));
+      ps.update(FIRE_INTERVAL_MS, makeInput({ shoot: true }));
       expect(combat.fire).not.toHaveBeenCalled();
     });
 
     it('ammo does not go below 0', () => {
       ps.spawn(SPAWN, NO_COLLIDERS);
       for (let i = 0; i < MAX_AMMO + 10; i++) {
-        ps.update(16, makeInput({ shoot: true }));
+        ps.update(FIRE_INTERVAL_MS, makeInput({ shoot: true }));
+        expect(ps.getState().ammo).toBeGreaterThanOrEqual(0);
       }
-      expect(ps.getState().ammo).toBe(0);
     });
 
     it('fire direction is a unit vector', () => {
@@ -359,6 +367,101 @@ describe('PlayerSystem', () => {
       const dir = combat.fire.mock.calls[0]?.[1] as { x: number; y: number; z: number };
       const len = Math.sqrt(dir.x ** 2 + dir.y ** 2 + dir.z ** 2);
       expect(len).toBeCloseTo(1, 5);
+    });
+  });
+
+  // ── landing regression: float error must not eject the player ───────────
+
+  describe('landing on the floor', () => {
+    const DUST_FLOOR: ColliderVolume = { min: { x: -60, y: -1, z: -60 }, max: { x: 60, y: 0.1, z: 60 } };
+
+    it.each([0.8829008780000002, 1, 0.37, 0.65432])(
+      'stays on the floor at its spawn x/z after landing from y=%s',
+      (startY) => {
+        ps.spawn({ x: 0, y: startY, z: -45 }, [DUST_FLOOR]);
+        for (let i = 0; i < 120; i++) ps.update(16, makeInput());
+        const { position, isAlive } = ps.getState();
+        expect(isAlive).toBe(true);
+        expect(position.x).toBe(0);
+        expect(position.z).toBe(-45);
+        expect(position.y).toBeCloseTo(0.1, 6);
+      },
+    );
+  });
+
+  // ── fire-rate limit and reload (D-07) ───────────────────────────────────
+
+  describe('fire-rate limit and reload', () => {
+    it('fires at most once per FIRE_INTERVAL_MS while fire is held', () => {
+      ps.spawn(SPAWN, NO_COLLIDERS);
+      // 60 frames of ~16.7 ms = 1 s of held fire
+      for (let i = 0; i < 60; i++) ps.update(1000 / 60, makeInput({ shoot: true }));
+      const shots = combat.fire.mock.calls.length;
+      expect(shots).toBe(Math.ceil(1000 / FIRE_INTERVAL_MS));
+      expect(ps.getState().ammo).toBe(MAX_AMMO - shots);
+    });
+
+    it('fires immediately on the first frame fire is pressed', () => {
+      ps.spawn(SPAWN, NO_COLLIDERS);
+      ps.update(1, makeInput({ shoot: true }));
+      expect(combat.fire).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts reloading automatically when the magazine empties, then refills', () => {
+      ps.spawn(SPAWN, NO_COLLIDERS);
+      drainMagazine();
+      expect(ps.getState().ammo).toBe(0);
+      expect(ps.getState().isReloading).toBe(true);
+
+      // Reload takes RELOAD_DURATION_MS (delta is capped at 100 ms per update)
+      for (let t = 0; t < RELOAD_DURATION_MS; t += 100) ps.update(100, makeInput());
+      expect(ps.getState().isReloading).toBe(false);
+      expect(ps.getState().ammo).toBe(MAX_AMMO);
+
+      combat.fire.mockClear();
+      ps.update(16, makeInput({ shoot: true }));
+      expect(combat.fire).toHaveBeenCalledTimes(1);
+    });
+
+    it('R key reloads a partly used magazine and blocks firing meanwhile', () => {
+      ps.spawn(SPAWN, NO_COLLIDERS);
+      ps.update(16, makeInput({ shoot: true }));
+      expect(ps.getState().ammo).toBe(MAX_AMMO - 1);
+
+      ps.update(FIRE_INTERVAL_MS, makeInput({ reload: true }));
+      expect(ps.getState().isReloading).toBe(true);
+
+      combat.fire.mockClear();
+      ps.update(FIRE_INTERVAL_MS, makeInput({ shoot: true }));
+      expect(combat.fire).not.toHaveBeenCalled();
+    });
+
+    it('reload() is a no-op with a full magazine or when dead', () => {
+      ps.spawn(SPAWN, NO_COLLIDERS);
+      expect(ps.reload()).toBe(false);
+      ps.update(16, makeInput({ shoot: true }));
+      ps.takeDamage(MAX_HEALTH, 'bot-1');
+      expect(ps.reload()).toBe(false);
+    });
+  });
+
+  // ── spawn registration and facing ────────────────────────────────────────
+
+  describe('spawn() registration and facing', () => {
+    it('registers the player as a combatant so firing never throws (D-03)', () => {
+      ps.spawn(SPAWN, NO_COLLIDERS);
+      expect(combat.initCombatant).toHaveBeenCalledWith(PLAYER_ENTITY_ID, MAX_HEALTH, expect.any(Number));
+      expect(combat.registerHitbox).toHaveBeenCalledWith(PLAYER_ENTITY_ID, expect.anything());
+    });
+
+    it('applies the initial yaw', () => {
+      ps.spawn(SPAWN, NO_COLLIDERS, Math.PI);
+      expect(ps.getState().rotation.y).toBeCloseTo(Math.PI);
+    });
+
+    it('falls back to yaw 0 for a non-finite initial yaw', () => {
+      ps.spawn(SPAWN, NO_COLLIDERS, Number.NaN);
+      expect(ps.getState().rotation.y).toBe(0);
     });
   });
 

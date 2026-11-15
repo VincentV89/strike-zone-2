@@ -16,3 +16,8 @@ coverage/
 
 # Wrangler
 .wrangler/
+
+# Playwright
+playwright-report/
+test-results/
+blob-report/

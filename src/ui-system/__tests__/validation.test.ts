@@ -32,28 +32,28 @@ describe('validateAlias', () => {
 });
 
 describe('validateMatchConfig', () => {
-  it('accepts a valid config with map-a', () => {
-    expect(validateMatchConfig({ mapId: 'map-a', botCount: 3 })).toBe(true);
+  it('accepts a valid config with dust', () => {
+    expect(validateMatchConfig({ mapId: 'dust', botCount: 3 })).toBe(true);
   });
 
-  it('accepts a valid config with map-b', () => {
-    expect(validateMatchConfig({ mapId: 'map-b', botCount: 8 })).toBe(true);
+  it('accepts a valid config with compound', () => {
+    expect(validateMatchConfig({ mapId: 'compound', botCount: 8 })).toBe(true);
   });
 
   it('rejects an unknown mapId', () => {
-    expect(validateMatchConfig({ mapId: 'map-c' as 'map-a', botCount: 3 })).toBe(false);
+    expect(validateMatchConfig({ mapId: 'map-c' as 'dust', botCount: 3 })).toBe(false);
   });
 
   it('rejects botCount of 0', () => {
-    expect(validateMatchConfig({ mapId: 'map-a', botCount: 0 })).toBe(false);
+    expect(validateMatchConfig({ mapId: 'dust', botCount: 0 })).toBe(false);
   });
 
   it('rejects botCount of 9', () => {
-    expect(validateMatchConfig({ mapId: 'map-a', botCount: 9 })).toBe(false);
+    expect(validateMatchConfig({ mapId: 'dust', botCount: 9 })).toBe(false);
   });
 
   it('rejects fractional botCount', () => {
-    expect(validateMatchConfig({ mapId: 'map-a', botCount: 1.5 })).toBe(false);
+    expect(validateMatchConfig({ mapId: 'dust', botCount: 1.5 })).toBe(false);
   });
 
   it('rejects missing mapId', () => {

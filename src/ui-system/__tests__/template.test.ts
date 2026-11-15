@@ -49,4 +49,18 @@ describe('createUITemplate', () => {
     // The first "active" occurrence should be near main-menu
     expect(Math.abs(mainMenuIdx - activeIdx)).toBeLessThan(50);
   });
+
+  it('lists map options from MAP_IDS with display names (no map-a/map-b)', () => {
+    const html = createUITemplate();
+    expect(html).toContain('<option value="dust">Dust</option>');
+    expect(html).toContain('<option value="compound">Compound</option>');
+    expect(html).not.toMatch(/map-a|map-b|Warehouse|Courtyard/);
+  });
+
+  it('contains the loading screen, menu error and practice notice', () => {
+    const html = createUITemplate();
+    expect(html).toContain('data-screen="loading"');
+    expect(html).toContain('data-testid="menu-error"');
+    expect(html).toContain('data-testid="practice-notice"');
+  });
 });

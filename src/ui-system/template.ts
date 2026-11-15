@@ -1,3 +1,9 @@
+import { MAP_DISPLAY_NAMES, MAP_IDS } from '../map-system/types.js';
+
+function mapOptions(): string {
+  return MAP_IDS.map((id) => `<option value="${id}">${MAP_DISPLAY_NAMES[id]}</option>`).join('\n        ');
+}
+
 /** Returns the full UI HTML structure as a string for injection into a container. */
 export function createUITemplate(): string {
   return `
@@ -8,8 +14,7 @@ export function createUITemplate(): string {
     <div class="main-menu__config">
       <label class="config-label" for="map-selector">Map</label>
       <select id="map-selector" data-testid="map-selector">
-        <option value="map-a">Map A — Warehouse</option>
-        <option value="map-b">Map B — Courtyard</option>
+        ${mapOptions()}
       </select>
 
       <label class="config-label">Bot Count</label>
@@ -21,7 +26,12 @@ export function createUITemplate(): string {
     </div>
 
     <button data-testid="play-button" class="btn-primary">Play</button>
+    <p data-testid="menu-error" class="error-msg" role="alert"></p>
   </div>
+</div>
+
+<div data-screen="loading" class="screen">
+  <p data-testid="loading-message" class="status-msg">Loading map…</p>
 </div>
 
 <div data-screen="hud" class="screen">
@@ -33,6 +43,7 @@ export function createUITemplate(): string {
     <div class="hud__vitals">
       <span class="hud__label">AMM</span>
       <span data-hud="ammo">30</span>
+      <span data-hud="reloading" class="hud__label" hidden>RELOADING</span>
     </div>
     <div class="hud__timer" data-hud="timer">03:00</div>
     <div class="hud__vitals">
@@ -61,6 +72,7 @@ export function createUITemplate(): string {
       <button data-testid="submit-button" class="btn-secondary">Submit Score</button>
       <span data-testid="submit-status" class="status-msg"></span>
     </div>
+    <p data-testid="practice-notice" class="status-msg" hidden>Practice round, score not submitted</p>
 
     <div class="end-round__actions">
       <button data-testid="play-again-button" class="btn-primary">Play Again</button>

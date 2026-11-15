@@ -9,10 +9,13 @@ import type {
   UIState,
 } from './types.js';
 import { validateAlias, validateMatchConfig } from './validation.js';
+import { MAP_IDS, isMapId } from '../map-system/types.js';
 
 const ERROR_MESSAGES = {
   submitFailed: 'Submission failed — please try again.',
   leaderboardUnavailable: 'Leaderboard unavailable.',
+  leaderboardEmpty: 'No scores yet.',
+  practiceRound: 'Practice round, score not submitted',
   alreadySubmitted: 'Score already submitted.',
   invalidAlias: 'Alias must be 1–20 printable ASCII characters.',
 } as const;
@@ -26,9 +29,11 @@ export class UISystem {
   private ammoCounter!: HTMLElement;
   private timerDisplay!: HTMLElement;
   private killCounter!: HTMLElement;
+  private reloadIndicator!: HTMLElement;
 
   // Screen containers
   private screenMainMenu!: HTMLElement;
+  private screenLoading!: HTMLElement;
   private screenHud!: HTMLElement;
   private screenEndRound!: HTMLElement;
   private screenLeaderboard!: HTMLElement;
@@ -39,6 +44,7 @@ export class UISystem {
   private botDecBtn!: HTMLElement;
   private botIncBtn!: HTMLElement;
   private playBtn!: HTMLElement;
+  private menuError!: HTMLElement;
 
   // End-round elements
   private outcomeDisplay!: HTMLElement;
@@ -49,6 +55,7 @@ export class UISystem {
   private submitStatus!: HTMLElement;
   private playAgainBtn!: HTMLElement;
   private viewLeaderboardBtn!: HTMLElement;
+  private practiceNotice!: HTMLElement;
 
   // Leaderboard elements
   private leaderboardBody!: HTMLElement;
@@ -59,7 +66,8 @@ export class UISystem {
   private currentScreen: ScreenId = 'main-menu';
   private submitResult: SubmitResultState = 'idle';
   private leaderboardLoading = false;
-  private matchConfig: MatchConfig = { mapId: 'map-a', botCount: 3 };
+  private matchConfig: MatchConfig = { mapId: MAP_IDS[0], botCount: 3 };
+  private practiceMode = false;
   private actionHandler: ActionHandler | null = null;
 
   // Listener registry for clean disposal
@@ -77,9 +85,11 @@ export class UISystem {
     this.ammoCounter = this.q('[data-hud="ammo"]');
     this.timerDisplay = this.q('[data-hud="timer"]');
     this.killCounter = this.q('[data-hud="kills"]');
+    this.reloadIndicator = this.q('[data-hud="reloading"]');
 
     // Screens
     this.screenMainMenu = this.q('[data-screen="main-menu"]');
+    this.screenLoading = this.q('[data-screen="loading"]');
     this.screenHud = this.q('[data-screen="hud"]');
     this.screenEndRound = this.q('[data-screen="end-round"]');
     this.screenLeaderboard = this.q('[data-screen="leaderboard"]');
@@ -90,6 +100,7 @@ export class UISystem {
     this.botDecBtn = this.q('[data-testid="bot-dec-button"]');
     this.botIncBtn = this.q('[data-testid="bot-inc-button"]');
     this.playBtn = this.q('[data-testid="play-button"]');
+    this.menuError = this.q('[data-testid="menu-error"]');
 
     // End round
     this.outcomeDisplay = this.q('[data-testid="outcome-display"]');
@@ -100,6 +111,7 @@ export class UISystem {
     this.submitStatus = this.q('[data-testid="submit-status"]');
     this.playAgainBtn = this.q('[data-testid="play-again-button"]');
     this.viewLeaderboardBtn = this.q('[data-testid="view-leaderboard-button"]');
+    this.practiceNotice = this.q('[data-testid="practice-notice"]');
 
     // Leaderboard
     this.leaderboardBody = this.q('[data-testid="leaderboard-body"]');
@@ -125,6 +137,11 @@ export class UISystem {
     this.actionHandler = handler;
   }
 
+  /** Practice rounds (any test hook active) never offer score submission. */
+  setPracticeMode(enabled: boolean): void {
+    this.practiceMode = enabled;
+  }
+
   // ─── Frame update (called by GameEngine at ~60 fps) ──────────────────────
 
   update(state: UIState): void {
@@ -133,6 +150,7 @@ export class UISystem {
     // 1. Player vitals
     this.healthBar.textContent = String(state.playerState.health);
     this.ammoCounter.textContent = String(state.playerState.ammo);
+    this.reloadIndicator.hidden = !state.playerState.isReloading;
 
     // 2. Timer MM:SS
     const totalSecs = Math.ceil(state.roundState.timeRemaining / 1000);
@@ -154,8 +172,18 @@ export class UISystem {
 
   showMainMenu(): void {
     this.submitResult = 'idle';
+    this.menuError.textContent = '';
     this.applyScreen('main-menu');
     this.renderMatchConfig();
+  }
+
+  /** Shows a user-visible error on the main menu (D-13). Cleared by the next Play click. */
+  showError(message: string): void {
+    this.menuError.textContent = message;
+  }
+
+  showLoading(): void {
+    this.applyScreen('loading');
   }
 
   showHUD(): void {
@@ -170,11 +198,19 @@ export class UISystem {
     this.aliasInput.value = '';
     this.aliasError.textContent = '';
     this.submitStatus.textContent = '';
-    this.submitBtn.removeAttribute('disabled');
+    this.practiceNotice.hidden = !this.practiceMode;
+    if (this.practiceMode) {
+      this.submitBtn.setAttribute('disabled', '');
+      this.aliasInput.setAttribute('disabled', '');
+    } else {
+      this.submitBtn.removeAttribute('disabled');
+      this.aliasInput.removeAttribute('disabled');
+    }
     this.applyScreen('end-round');
   }
 
-  showLeaderboard(entries: ScoreEntry[]): void {
+  /** entries === null means the leaderboard could not be reached (D-14). */
+  showLeaderboard(entries: ScoreEntry[] | null): void {
     this.leaderboardLoading = false;
     this.renderLeaderboard(entries);
     this.applyScreen('leaderboard');
@@ -198,6 +234,7 @@ export class UISystem {
   private applyScreen(screen: ScreenId): void {
     this.currentScreen = screen;
     this.screenMainMenu.classList.toggle('active', screen === 'main-menu');
+    this.screenLoading.classList.toggle('active', screen === 'loading');
     this.screenHud.classList.toggle('active', screen === 'hud');
     this.screenEndRound.classList.toggle('active', screen === 'end-round');
     this.screenLeaderboard.classList.toggle('active', screen === 'leaderboard');
@@ -218,9 +255,14 @@ export class UISystem {
     }
   }
 
-  private renderLeaderboard(entries: ScoreEntry[]): void {
-    if (entries.length === 0) {
+  private renderLeaderboard(entries: ScoreEntry[] | null): void {
+    if (entries === null) {
       this.leaderboardStatus.textContent = ERROR_MESSAGES.leaderboardUnavailable;
+      this.leaderboardBody.textContent = '';
+      return;
+    }
+    if (entries.length === 0) {
+      this.leaderboardStatus.textContent = ERROR_MESSAGES.leaderboardEmpty;
       this.leaderboardBody.textContent = '';
       return;
     }
@@ -229,6 +271,7 @@ export class UISystem {
     this.leaderboardBody.textContent = '';
     sorted.forEach((entry, i) => {
       const row = document.createElement('tr');
+      row.setAttribute('data-testid', 'leaderboard-row');
 
       const rankCell = document.createElement('td');
       rankCell.textContent = String(i + 1);
@@ -254,7 +297,7 @@ export class UISystem {
     // Map selector
     this.on(this.mapSelector, 'change', () => {
       const val = this.mapSelector.value;
-      if (val === 'map-a' || val === 'map-b') {
+      if (isMapId(val)) {
         this.matchConfig = { ...this.matchConfig, mapId: val };
         this.updatePlayButton();
       }
@@ -286,6 +329,7 @@ export class UISystem {
     // Play button
     this.on(this.playBtn, 'click', () => {
       if (!validateMatchConfig(this.matchConfig)) return;
+      this.menuError.textContent = '';
       this.dispatch({ type: 'start-game', config: { ...this.matchConfig } });
     });
 
@@ -301,7 +345,11 @@ export class UISystem {
 
     // Submit score
     this.on(this.submitBtn, 'click', () => {
-      if (this.submitResult === 'ok') return;
+      if (this.submitResult === 'ok' || this.submitResult === 'loading') return;
+      if (this.practiceMode) {
+        this.submitStatus.textContent = ERROR_MESSAGES.practiceRound;
+        return;
+      }
       const alias = this.aliasInput.value;
       if (!validateAlias(alias)) {
         this.aliasError.textContent = ERROR_MESSAGES.invalidAlias;
@@ -314,10 +362,9 @@ export class UISystem {
       this.dispatch({ type: 'submit-score', alias });
     });
 
-    // Play again
+    // Play again — the engine moves to loading then HUD, or back to the menu with an error (D-09).
     this.on(this.playAgainBtn, 'click', () => {
       this.dispatch({ type: 'play-again' });
-      this.showMainMenu();
     });
 
     // View leaderboard

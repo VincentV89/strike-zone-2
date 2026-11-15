@@ -7,6 +7,14 @@ export class InputHandler {
   private accumulator = { x: 0, y: 0 };
   private mouseButtonDown = false;
   private pointerLocked = false;
+  /**
+   * Chromium can deliver one mousemove with a large bogus movementX/Y right
+   * after pointer lock engages (the cursor's jump to the lock point). Dropping
+   * that single event keeps the camera from snapping on Play or re-lock.
+   */
+  private skipNextMove = false;
+  /** Latches a reload tap until the next getState(), so taps shorter than a frame are not lost. */
+  private reloadRequested = false;
   private initialized = false;
   private readonly eventTarget: EventTarget;
   private readonly lockTarget: Element;
@@ -55,6 +63,8 @@ export class InputHandler {
     this.accumulator = { x: 0, y: 0 };
     this.mouseButtonDown = false;
     this.pointerLocked = false;
+    this.skipNextMove = false;
+    this.reloadRequested = false;
     this.initialized = false;
     this.boundHandlers = {};
   }
@@ -71,11 +81,13 @@ export class InputHandler {
       right:       this.pressedKeys.has(KEY_BINDINGS.right),
       jump:        this.pressedKeys.has(KEY_BINDINGS.jump),
       shoot:       this.mouseButtonDown,
+      reload:      this.reloadRequested || this.pressedKeys.has(KEY_BINDINGS.reload),
       mouseDeltaX: this.accumulator.x,
       mouseDeltaY: this.accumulator.y,
     };
     this.accumulator.x = 0;
     this.accumulator.y = 0;
+    this.reloadRequested = false;
     return state;
   }
 
@@ -96,6 +108,7 @@ export class InputHandler {
     }
     if (TRACKED_KEYS.has(e.code)) {
       this.pressedKeys.add(e.code);
+      if (e.code === KEY_BINDINGS.reload) this.reloadRequested = true;
     }
   }
 
@@ -108,6 +121,10 @@ export class InputHandler {
 
   private onMouseMove(event: Event): void {
     if (!this.pointerLocked) return;
+    if (this.skipNextMove) {
+      this.skipNextMove = false;
+      return;
+    }
     const e = event as MouseEvent;
     this.accumulator.x += e.movementX;
     this.accumulator.y += e.movementY;
@@ -129,6 +146,7 @@ export class InputHandler {
 
   private onPointerLockChange(): void {
     if (document.pointerLockElement !== null) {
+      if (!this.pointerLocked) this.skipNextMove = true;
       this.pointerLocked = true;
     } else {
       this.pointerLocked = false;

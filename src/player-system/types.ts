@@ -9,6 +9,8 @@ export interface PlayerState {
   readonly position: Vec3;
   readonly rotation: Vec2;
   readonly isAlive: boolean;
+  /** True while a reload is in progress; firing is blocked. */
+  readonly isReloading: boolean;
 }
 
 export interface ColliderVolume {
@@ -22,6 +24,10 @@ export const PLAYER_ENTITY_ID = 'player' as const;
 export const MAX_HEALTH = 100;
 export const MAX_AMMO = 30;
 export const DAMAGE_PER_SHOT = 25;
+/** Minimum time between shots while fire is held (8 rounds per second). */
+export const FIRE_INTERVAL_MS = 125;
+/** Time to refill the magazine (R key, or automatically when empty). */
+export const RELOAD_DURATION_MS = 1500;
 export const MOVE_SPEED = 5.0;
 export const JUMP_VELOCITY = 5.0;
 export const GRAVITY = 9.8;

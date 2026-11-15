@@ -38,25 +38,37 @@ describe('LeaderboardClient — getTopScores', () => {
     expect(result).toEqual(SAMPLE_ENTRIES);
   });
 
-  it('returns [] when response is not ok', async () => {
+  it('returns null (unavailable) when response is not ok', async () => {
     vi.stubGlobal('fetch', mockFetch({ ok: false, status: 500 }));
     const client = makeClient();
     const result = await client.getTopScores();
-    expect(result).toEqual([]);
+    expect(result).toBeNull();
   });
 
-  it('returns [] on network error (fetch throws)', async () => {
+  it('returns null (unavailable) on network error (fetch throws)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
     const client = makeClient();
     const result = await client.getTopScores();
-    expect(result).toEqual([]);
+    expect(result).toBeNull();
   });
 
-  it('returns [] on timeout (AbortError)', async () => {
+  it('returns null (unavailable) on timeout (AbortError)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' })));
     const client = makeClient({ timeoutMs: 1 });
     const result = await client.getTopScores();
-    expect(result).toEqual([]);
+    expect(result).toBeNull();
+  });
+
+  it('returns [] (not null) when the board is empty', async () => {
+    vi.stubGlobal('fetch', mockFetch({ ok: true, status: 200, jsonData: { scores: [] } }));
+    const client = makeClient();
+    expect(await client.getTopScores()).toEqual([]);
+  });
+
+  it('returns null when the body has no scores array', async () => {
+    vi.stubGlobal('fetch', mockFetch({ ok: true, status: 200, jsonData: { nope: 1 } }));
+    const client = makeClient();
+    expect(await client.getTopScores()).toBeNull();
   });
 
   it('calls GET /scores with correct URL', async () => {

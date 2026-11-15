@@ -114,3 +114,70 @@ describe('.github/workflows/ci.yml', () => {
     expect(workflow).toContain('${{ secrets.CLOUDFLARE_ACCOUNT_ID }}');
   });
 });
+
+// ─── D-12: CSP connect-src covers every leaderboard host we deploy or call ────
+
+/** Converts a CSP host-source (optionally with a leading *. wildcard) to a matcher. */
+function cspSourceMatches(source: string, url: URL): boolean {
+  const m = /^(https?:)\/\/(\*\.)?([^/:]+)$/.exec(source);
+  if (!m) return false;
+  const [, scheme, wildcard, host] = m;
+  if (url.protocol !== scheme) return false;
+  return wildcard ? url.hostname.endsWith(`.${host}`) : url.hostname === host;
+}
+
+function connectSrc(headersFile: string): string[] {
+  const csp = /Content-Security-Policy:\s*(.+)/.exec(headersFile)?.[1] ?? '';
+  const directive = csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('connect-src')) ?? '';
+  return directive.split(/\s+/).slice(1);
+}
+
+describe('CSP connect-src allows the leaderboard hosts (D-12)', () => {
+  const headers = readFileSync(join(ROOT, 'public/_headers'), 'utf-8');
+  const workflow = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf-8');
+  const envExample = readFileSync(join(ROOT, '.env.example'), 'utf-8');
+  const sources = connectSrc(headers);
+
+  const leaderboardUrls = [
+    ...(workflow.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []),
+    ...(envExample.match(/https:\/\/[a-z0-9.-]+\.workers\.dev/g) ?? []),
+  ];
+
+  it('finds leaderboard URLs to check', () => {
+    expect(leaderboardUrls.length).toBeGreaterThan(0);
+  });
+
+  it.each([...new Set(leaderboardUrls)].map((u) => [u]))('%s is allowed by connect-src', (u) => {
+    const url = new URL(u);
+    expect(sources.some((s) => cspSourceMatches(s, url))).toBe(true);
+  });
+
+  it('keeps connect-src narrow (no bare wildcard or scheme-only sources)', () => {
+    expect(sources).not.toContain('*');
+    expect(sources).not.toContain('https:');
+  });
+
+  it('matcher rejects unrelated hosts', () => {
+    expect(sources.some((s) => cspSourceMatches(s, new URL('https://evil.example.com')))).toBe(false);
+  });
+});
+
+describe('CI E2E gate', () => {
+  const workflow = readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf-8');
+
+  it('defines an e2e job that runs the Playwright suite', () => {
+    expect(workflow).toMatch(/^\s{2}e2e:/m);
+    expect(workflow).toContain('npm run test:e2e');
+    expect(workflow).toContain('npx playwright install --with-deps chromium');
+  });
+
+  it('deploy depends on both ci and e2e', () => {
+    expect(workflow).toMatch(/deploy:[\s\S]*?needs:\s*\[ci,\s*e2e\]/);
+  });
+
+  it('uploads the Playwright report and traces on failure', () => {
+    expect(workflow).toContain('playwright-report/');
+    expect(workflow).toContain('test-results/');
+  });
+});
+
