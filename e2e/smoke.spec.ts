@@ -5,6 +5,7 @@ import {
   hud,
   openGame,
   pointerLockRequests,
+  readDebug,
   releaseFire,
   screen,
   startMatch,
@@ -43,20 +44,32 @@ test.describe('smoke: menu, start, HUD, shoot (req-e2e-smoke-flow)', () => {
 
   // botHealth=1000 keeps the round alive: the spawn heading points at bot 1, so
   // unhooked shots would kill it and end the round mid-test.
+  // The fire rate is measured against game time from __SZ_DEBUG__, not the wall
+  // clock: under software GL a starved renderer can run far slower than real
+  // time, so a wall-clock hold can span anything from zero to 30+ shots.
   test('holding fire spends ammo at the fire rate and the loop keeps running (D-03, D-07)', async ({ page }) => {
-    await openGame(page, '?botHealth=1000');
+    await openGame(page, '?botHealth=1000&debug=1');
     await startMatch(page, 'compound', 1);
     const t0 = await timerSeconds(page);
+    const before = await readDebug(page);
+    expect(before.player.ammo).toBe(30);
 
     await holdFire(page);
-    await expect.poll(async () => Number(await hud(page, 'ammo').textContent()), { timeout: 5_000 }).toBeLessThan(30);
-    await page.waitForTimeout(1_000);
+    // Release after a handful of shots, well before the magazine empties and
+    // the automatic reload refills it.
+    await expect
+      .poll(async () => (await readDebug(page)).player.ammo, { timeout: 20_000, intervals: [100] })
+      .toBeLessThanOrEqual(25);
     await releaseFire(page);
+    const after = await readDebug(page);
 
-    const ammoAfter = Number(await hud(page, 'ammo').textContent());
-    // ~1.2 s at 8 rounds/s ≈ 10 rounds; a per-frame weapon would have emptied the magazine.
-    expect(ammoAfter).toBeGreaterThan(0);
-    expect(ammoAfter).toBeLessThan(30);
+    const shots = before.player.ammo - after.player.ammo;
+    const gameMs = before.timeRemainingMs - after.timeRemainingMs;
+    expect(after.player.isReloading).toBe(false);
+    expect(shots).toBeGreaterThanOrEqual(5);
+    // 8 rounds/s = one shot per 125 ms of game time (+1 for the first shot at t=0).
+    expect(shots).toBeLessThanOrEqual(Math.ceil(gameMs / 125) + 1);
+
     await expect.poll(() => timerSeconds(page), { timeout: 20_000 }).toBeLessThan(t0);
     await expect(screen(page, 'hud')).toHaveClass(/active/);
   });
